@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>لوحة التحكم — عقاري ذكي</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="app-body">
+
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a href="index.html" class="logo sidebar-logo">
+      <span class="logo-mark">ع</span>
+      عقاري ذكي
+    </a>
+    <nav class="sidebar-nav">
+      <a href="#overview" data-route="overview"><span class="s-icon">📊</span>نظرة عامة</a>
+      <a href="#properties" data-route="properties"><span class="s-icon">🏢</span>العقارات والوحدات</a>
+      <a href="#tenants" data-route="tenants"><span class="s-icon">👥</span>المستأجرون</a>
+      <a href="#contracts" data-route="contracts"><span class="s-icon">📄</span>العقود</a>
+      <a href="#collections" data-route="collections"><span class="s-icon">💰</span>التحصيلات</a>
+      <a href="#maintenance" data-route="maintenance"><span class="s-icon">🛠️</span>الصيانة</a>
+      <a href="#ai" data-route="ai"><span class="s-icon">✨</span>المساعد الذكي</a>
+    </nav>
+    <button class="btn btn-outline sidebar-logout" id="logoutBtn">تسجيل الخروج</button>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-topbar">
+      <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+      <h1 id="pageTitle">نظرة عامة</h1>
+      <div class="app-user" id="appUser"></div>
+    </header>
+    <main class="app-content" id="appContent"></main>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBody"></div>
+</div>
+
+<script src="data.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

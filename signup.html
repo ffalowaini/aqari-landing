@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>إنشاء حساب — عقاري ذكي</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="auth.css">
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <a href="index.html" class="logo auth-logo">
+      <span class="logo-mark">ع</span>
+      عقاري ذكي
+    </a>
+    <h1>إنشاء حساب جديد</h1>
+    <p class="auth-sub">ابدأ إدارة أملاكك خلال دقائق، مجانًا بدون بطاقة ائتمانية.</p>
+
+    <div id="authError" class="auth-error"></div>
+
+    <form id="signupForm" class="auth-form">
+      <label>الاسم الكامل
+        <input type="text" name="name" placeholder="مثال: خالد العمري" required>
+      </label>
+      <label>البريد الإلكتروني
+        <input type="email" name="email" placeholder="you@example.com" required>
+      </label>
+      <label>كلمة المرور
+        <input type="password" name="password" placeholder="••••••••" minlength="4" required>
+      </label>
+      <button type="submit" class="btn btn-primary btn-lg auth-submit">إنشاء الحساب</button>
+    </form>
+
+    <p class="auth-switch">لديك حساب بالفعل؟ <a href="login.html">تسجيل الدخول</a></p>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="auth.js"></script>
+<script>initSignupForm();</script>
+</body>
+</html>
