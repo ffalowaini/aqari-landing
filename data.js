@@ -12,9 +12,7 @@ const DB_KEYS = {
   units: "aqari_units",
   tenants: "aqari_tenants",
   contracts: "aqari_contracts",
-  payments: "aqari_payments",
-  maintenance: "aqari_maintenance",
-  seeded: "aqari_seeded",
+  seeded: "aqari_seeded_v2",
 };
 
 function readDB(key) {
@@ -31,6 +29,24 @@ function uid(prefix) {
 function seedIfNeeded() {
   if (localStorage.getItem(DB_KEYS.seeded)) return;
 
+  // Data left over from the previous (v1) schema — patch it up in place
+  // instead of wiping out anything a returning visitor already added.
+  const existingUnits = readDB(DB_KEYS.units);
+  const existingContracts = readDB(DB_KEYS.contracts);
+  if (existingUnits.length || existingContracts.length) {
+    existingUnits.forEach((u) => { if (u.street === undefined) u.street = "غير محدد"; });
+    existingContracts.forEach((c) => {
+      if (c.installments === undefined) c.installments = 12;
+      if (c.paidAmount === undefined) c.paidAmount = 0;
+    });
+    writeDB(DB_KEYS.units, existingUnits);
+    writeDB(DB_KEYS.contracts, existingContracts);
+    localStorage.removeItem("aqari_payments");
+    localStorage.removeItem("aqari_maintenance");
+    localStorage.setItem(DB_KEYS.seeded, "1");
+    return;
+  }
+
   const properties = [
     { id: "p1", name: "برج الواحة", city: "الرياض", unitsCount: 24 },
     { id: "p2", name: "مجمع الشروق السكني", city: "جدة", unitsCount: 16 },
@@ -38,12 +54,12 @@ function seedIfNeeded() {
   ];
 
   const units = [
-    { id: "u1", propertyId: "p1", number: "101", rent: 32000, status: "occupied" },
-    { id: "u2", propertyId: "p1", number: "102", rent: 34000, status: "occupied" },
-    { id: "u3", propertyId: "p1", number: "103", rent: 30000, status: "vacant" },
-    { id: "u4", propertyId: "p2", number: "A1", rent: 22000, status: "occupied" },
-    { id: "u5", propertyId: "p2", number: "A2", rent: 21000, status: "occupied" },
-    { id: "u6", propertyId: "p3", number: "201", rent: 27000, status: "vacant" },
+    { id: "u1", propertyId: "p1", number: "101", street: "شارع الأمير سلطان", rent: 32000, status: "occupied" },
+    { id: "u2", propertyId: "p1", number: "102", street: "شارع الأمير سلطان", rent: 34000, status: "occupied" },
+    { id: "u3", propertyId: "p1", number: "103", street: "شارع الأمير سلطان", rent: 30000, status: "vacant" },
+    { id: "u4", propertyId: "p2", number: "A1", street: "شارع فلسطين", rent: 22000, status: "occupied" },
+    { id: "u5", propertyId: "p2", number: "A2", street: "شارع فلسطين", rent: 21000, status: "occupied" },
+    { id: "u6", propertyId: "p3", number: "201", street: "شارع الملك فهد", rent: 27000, status: "vacant" },
   ];
 
   const tenants = [
@@ -54,32 +70,16 @@ function seedIfNeeded() {
   ];
 
   const contracts = [
-    { id: "c1", tenantId: "t1", unitId: "u1", start: "2025-09-01", end: "2026-08-31", rent: 32000, status: "active" },
-    { id: "c2", tenantId: "t2", unitId: "u2", start: "2025-10-15", end: "2026-09-14", rent: 34000, status: "active" },
-    { id: "c3", tenantId: "t3", unitId: "u4", start: "2025-11-01", end: "2026-09-05", rent: 22000, status: "expiring" },
-    { id: "c4", tenantId: "t4", unitId: "u5", start: "2025-08-01", end: "2026-07-31", rent: 21000, status: "active" },
-  ];
-
-  const payments = [
-    { id: "pay1", tenantId: "t1", amount: 32000, dueDate: "2026-08-05", status: "paid" },
-    { id: "pay2", tenantId: "t2", amount: 34000, dueDate: "2026-08-10", status: "late" },
-    { id: "pay3", tenantId: "t3", amount: 22000, dueDate: "2026-08-20", status: "due" },
-    { id: "pay4", tenantId: "t4", amount: 21000, dueDate: "2026-08-01", status: "late" },
-    { id: "pay5", tenantId: "t1", amount: 32000, dueDate: "2026-09-05", status: "due" },
-  ];
-
-  const maintenance = [
-    { id: "m1", unitId: "u2", title: "تسريب مياه في المطبخ", status: "open", createdAt: "2026-08-18" },
-    { id: "m2", unitId: "u4", title: "عطل في مكيف الصالة", status: "in_progress", createdAt: "2026-08-15" },
-    { id: "m3", unitId: "u1", title: "صيانة باب المدخل", status: "closed", createdAt: "2026-08-02" },
+    { id: "c1", tenantId: "t1", unitId: "u1", start: "2025-09-01", rent: 32000, installments: 12, paidAmount: 32000 },
+    { id: "c2", tenantId: "t2", unitId: "u2", start: "2025-10-15", rent: 34000, installments: 4, paidAmount: 17000 },
+    { id: "c3", tenantId: "t3", unitId: "u4", start: "2025-11-01", rent: 22000, installments: 2, paidAmount: 0 },
+    { id: "c4", tenantId: "t4", unitId: "u5", start: "2025-08-01", rent: 21000, installments: 12, paidAmount: 21000 },
   ];
 
   writeDB(DB_KEYS.properties, properties);
   writeDB(DB_KEYS.units, units);
   writeDB(DB_KEYS.tenants, tenants);
   writeDB(DB_KEYS.contracts, contracts);
-  writeDB(DB_KEYS.payments, payments);
-  writeDB(DB_KEYS.maintenance, maintenance);
   localStorage.setItem(DB_KEYS.seeded, "1");
 }
 
@@ -111,10 +111,4 @@ const DataStore = {
 
   getContracts() { return readDB(DB_KEYS.contracts); },
   saveContracts(list) { writeDB(DB_KEYS.contracts, list); },
-
-  getPayments() { return readDB(DB_KEYS.payments); },
-  savePayments(list) { writeDB(DB_KEYS.payments, list); },
-
-  getMaintenance() { return readDB(DB_KEYS.maintenance); },
-  saveMaintenance(list) { writeDB(DB_KEYS.maintenance, list); },
 };

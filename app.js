@@ -27,28 +27,35 @@ function propertyName(id) {
   const p = DataStore.getProperties().find((x) => x.id === id);
   return p ? p.name : "—";
 }
-function unitLabel(id) {
-  const u = DataStore.getUnits().find((x) => x.id === id);
-  if (!u) return "—";
-  return `${propertyName(u.propertyId)} - وحدة ${u.number}`;
-}
 function tenantName(id) {
   const t = DataStore.getTenants().find((x) => x.id === id);
   return t ? t.name : "—";
 }
+function toHijri(isoDate) {
+  if (!isoDate) return "—";
+  const d = new Date(isoDate + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "—";
+  return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura", {
+    year: "numeric", month: "long", day: "numeric",
+  }).format(d) + " هـ";
+}
+function contractForUnit(unitId) {
+  return DataStore.getContracts()
+    .filter((c) => c.unitId === unitId)
+    .sort((a, b) => b.start.localeCompare(a.start))[0];
+}
+function paymentStatusOf(contract) {
+  if (!contract) return "vacant";
+  if (contract.paidAmount <= 0) return "not_started";
+  if (contract.paidAmount >= contract.rent) return "paid_full";
+  return "partial";
+}
 function statusBadge(status) {
   const map = {
-    occupied: ["مؤجرة", "badge-green"],
     vacant: ["شاغرة", "badge-gray"],
-    active: ["ساري", "badge-green"],
-    expiring: ["ينتهي قريبًا", "badge-orange"],
-    ended: ["منتهٍ", "badge-gray"],
-    paid: ["مدفوع", "badge-green"],
-    due: ["مستحق", "badge-blue"],
-    late: ["متأخر", "badge-red"],
-    open: ["مفتوح", "badge-red"],
-    in_progress: ["قيد التنفيذ", "badge-orange"],
-    closed: ["مغلق", "badge-green"],
+    not_started: ["لم يبدأ السداد", "badge-red"],
+    partial: ["سداد جزئي", "badge-orange"],
+    paid_full: ["مكتمل السداد", "badge-green"],
   };
   const [label, cls] = map[status] || [status, "badge-gray"];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -56,6 +63,8 @@ function statusBadge(status) {
 function openModal(html) {
   els.modalBody.innerHTML = html;
   els.modalOverlay.classList.add("open");
+  const cancelBtn = document.getElementById("cancelModal");
+  if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
 }
 function closeModal() {
   els.modalOverlay.classList.remove("open");
@@ -64,18 +73,13 @@ function closeModal() {
 
 /* ---------- router ---------- */
 const routes = {
-  overview: { title: "نظرة عامة", render: renderOverview },
-  properties: { title: "العقارات والوحدات", render: renderProperties },
-  tenants: { title: "المستأجرون", render: renderTenants },
-  contracts: { title: "العقود", render: renderContracts },
-  collections: { title: "التحصيلات", render: renderCollections },
-  maintenance: { title: "الصيانة", render: renderMaintenance },
-  ai: { title: "المساعد الذكي", render: renderAI },
+  units: { title: "الوحدات", render: renderUnits },
+  overview: { title: "لوحة المعلومات", render: renderOverview },
 };
 
 function router() {
-  const hash = (window.location.hash || "#overview").slice(1);
-  const route = routes[hash] || routes.overview;
+  const hash = (window.location.hash || "#units").slice(1);
+  const route = routes[hash] || routes.units;
   els.title.textContent = route.title;
   document.querySelectorAll(".sidebar-nav a").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === hash);
@@ -86,454 +90,271 @@ function router() {
 }
 window.addEventListener("hashchange", router);
 
-/* ---------- overview ---------- */
+/* ---------- الوحدات (merged unit view) ---------- */
+function renderUnits() {
+  const units = DataStore.getUnits();
+  const properties = DataStore.getProperties();
+
+  const rows = units.map((u) => {
+    const contract = contractForUnit(u.id);
+    const status = paymentStatusOf(contract);
+    const paid = contract ? contract.paidAmount : 0;
+    const remaining = contract ? Math.max(0, contract.rent - contract.paidAmount) : 0;
+    return `
+      <tr>
+        <td>${propertyName(u.propertyId)}</td>
+        <td>${u.number}</td>
+        <td>${u.street || "—"}</td>
+        <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
+        <td>${contract ? toHijri(contract.start) : "—"}</td>
+        <td>${contract ? money(contract.rent) : "—"}</td>
+        <td>${contract ? contract.installments : "—"}</td>
+        <td>${contract ? money(paid) : "—"}</td>
+        <td>${contract ? money(remaining) : "—"}</td>
+        <td>${statusBadge(status)}</td>
+        <td class="table-actions">
+          ${contract
+            ? `<button class="link-btn" data-update-paid="${contract.id}">تحديث المبلغ المدفوع</button>`
+            : `<button class="link-btn" data-rent-out="${u.id}">تأجير الوحدة</button>`}
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  els.content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h2>الوحدات (${units.length})</h2>
+        <div class="table-actions">
+          <button class="btn btn-outline" id="addPropertyBtn">+ عقار جديد</button>
+          <button class="btn btn-primary" id="addUnitBtn">+ وحدة جديدة</button>
+        </div>
+      </div>
+      ${units.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>العقار</th><th>الوحدة</th><th>الشارع</th><th>المستأجر</th>
+                <th>تاريخ بدء الإيجار (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
+                <th>المبلغ المدفوع</th><th>المبلغ المتبقي</th><th>حالة الدفع</th><th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">${properties.length ? "لا توجد وحدات بعد، ابدأ بإضافة وحدة." : "ابدأ بإضافة عقار ثم وحدة."}</div>`}
+    </div>
+  `;
+
+  document.getElementById("addPropertyBtn").addEventListener("click", openAddPropertyModal);
+  document.getElementById("addUnitBtn").addEventListener("click", openAddUnitModal);
+
+  els.content.querySelectorAll("[data-update-paid]").forEach((btn) => {
+    btn.addEventListener("click", () => openUpdatePaidModal(btn.dataset.updatePaid));
+  });
+  els.content.querySelectorAll("[data-rent-out]").forEach((btn) => {
+    btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut));
+  });
+}
+
+function openAddPropertyModal() {
+  openModal(`
+    <h3>إضافة عقار جديد</h3>
+    <form class="modal-form" id="propertyForm">
+      <label>اسم العقار <input type="text" name="name" required></label>
+      <label>المدينة <input type="text" name="city" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("propertyForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const properties = DataStore.getProperties();
+    properties.push({ id: DataStore.uid("p"), name: f.name.value.trim(), city: f.city.value.trim(), unitsCount: 0 });
+    DataStore.saveProperties(properties);
+    closeModal();
+    renderUnits();
+  });
+}
+
+function openAddUnitModal() {
+  const properties = DataStore.getProperties();
+  if (!properties.length) {
+    openModal(`
+      <h3>لا يوجد عقارات بعد</h3>
+      <p style="color:var(--text-dim);font-size:.88rem;">أضف عقارًا أولًا قبل إضافة وحدة.</p>
+      <div class="modal-actions"><button class="btn btn-outline" id="cancelModal">إغلاق</button></div>
+    `);
+    return;
+  }
+  openModal(`
+    <h3>إضافة وحدة جديدة</h3>
+    <form class="modal-form" id="unitForm">
+      <label>العقار
+        <select name="propertyId" required>
+          ${properties.map((p) => `<option value="${p.id}">${p.name}</option>`).join("")}
+        </select>
+      </label>
+      <label>رقم الوحدة <input type="text" name="number" required></label>
+      <label>الشارع <input type="text" name="street" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("unitForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const units = DataStore.getUnits();
+    units.push({
+      id: DataStore.uid("u"),
+      propertyId: f.propertyId.value,
+      number: f.number.value.trim(),
+      street: f.street.value.trim(),
+      rent: 0,
+      status: "vacant",
+    });
+    DataStore.saveUnits(units);
+    closeModal();
+    renderUnits();
+  });
+}
+
+function openRentOutModal(unitId) {
+  openModal(`
+    <h3>تأجير الوحدة</h3>
+    <form class="modal-form" id="rentOutForm">
+      <label>اسم المستأجر <input type="text" name="tenantName" required></label>
+      <label>رقم الجوال <input type="text" name="phone" required></label>
+      <label>تاريخ بدء الإيجار
+        <input type="date" name="start" required>
+      </label>
+      <p style="margin:-6px 0 0;font-size:.76rem;color:var(--text-dim);">سيُعرض التاريخ في صفحة الوحدات بالتقويم الهجري تلقائيًا.</p>
+      <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" required></label>
+      <label>عدد الأقساط <input type="number" name="installments" min="1" value="1" required></label>
+      <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("rentOutForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const rent = Number(f.rent.value);
+    const paidAmount = Math.min(Number(f.paidAmount.value), rent);
+
+    const tenants = DataStore.getTenants();
+    const tenant = { id: DataStore.uid("t"), name: f.tenantName.value.trim(), phone: f.phone.value.trim(), unitId };
+    tenants.push(tenant);
+    DataStore.saveTenants(tenants);
+
+    const contracts = DataStore.getContracts();
+    contracts.push({
+      id: DataStore.uid("c"),
+      tenantId: tenant.id,
+      unitId,
+      start: f.start.value,
+      rent,
+      installments: Number(f.installments.value),
+      paidAmount,
+    });
+    DataStore.saveContracts(contracts);
+
+    const units = DataStore.getUnits();
+    const unit = units.find((u) => u.id === unitId);
+    if (unit) { unit.status = "occupied"; unit.rent = rent; }
+    DataStore.saveUnits(units);
+
+    closeModal();
+    renderUnits();
+  });
+}
+
+function openUpdatePaidModal(contractId) {
+  const contract = DataStore.getContracts().find((c) => c.id === contractId);
+  if (!contract) return;
+  openModal(`
+    <h3>تحديث المبلغ المدفوع</h3>
+    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">قيمة الإيجار: ${money(contract.rent)}</p>
+    <form class="modal-form" id="paidForm">
+      <label>المبلغ المدفوع <input type="number" name="paidAmount" min="0" value="${contract.paidAmount}" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("paidForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const value = Math.max(0, Number(e.target.paidAmount.value));
+    const contracts = DataStore.getContracts();
+    const c = contracts.find((x) => x.id === contractId);
+    if (c) c.paidAmount = value;
+    DataStore.saveContracts(contracts);
+    closeModal();
+    renderUnits();
+  });
+}
+
+/* ---------- لوحة المعلومات (dashboard overview) ---------- */
 function renderOverview() {
   const units = DataStore.getUnits();
-  const payments = DataStore.getPayments();
-  const maintenance = DataStore.getMaintenance();
+  const contracts = DataStore.getContracts();
 
-  const occupied = units.filter((u) => u.status === "occupied").length;
-  const occupancyRate = units.length ? Math.round((occupied / units.length) * 100) : 0;
-  const paidThisMonth = payments.filter((p) => p.status === "paid").reduce((s, p) => s + p.amount, 0);
-  const lateCount = payments.filter((p) => p.status === "late").length;
-  const openMaintenance = maintenance.filter((m) => m.status !== "closed").length;
+  const occupiedUnits = units.filter((u) => u.status === "occupied");
+  const occupancyRate = units.length ? Math.round((occupiedUnits.length / units.length) * 100) : 0;
 
-  const upcoming = payments
-    .filter((p) => p.status !== "paid")
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate))
+  const totalRent = contracts.reduce((s, c) => s + c.rent, 0);
+  const totalPaid = contracts.reduce((s, c) => s + c.paidAmount, 0);
+  const totalRemaining = contracts.reduce((s, c) => s + Math.max(0, c.rent - c.paidAmount), 0);
+  const collectionRate = totalRent ? Math.round((totalPaid / totalRent) * 100) : 0;
+
+  const topRemaining = contracts
+    .map((c) => ({ c, remaining: Math.max(0, c.rent - c.paidAmount) }))
+    .filter((x) => x.remaining > 0)
+    .sort((a, b) => b.remaining - a.remaining)
     .slice(0, 5);
 
   els.content.innerHTML = `
     <div class="stat-grid">
-      <div class="stat-card accent"><div class="stat-label">التحصيلات المدفوعة هذا الشهر</div><div class="stat-value">${money(paidThisMonth)}</div></div>
+      <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${units.length}</div></div>
       <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${occupancyRate}%</div></div>
-      <div class="stat-card warn"><div class="stat-label">دفعات متأخرة</div><div class="stat-value">${lateCount}</div></div>
-      <div class="stat-card"><div class="stat-label">طلبات صيانة مفتوحة</div><div class="stat-value">${openMaintenance}</div></div>
+      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(totalPaid)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(totalRemaining)}</div></div>
+    </div>
+    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+      <div class="stat-card"><div class="stat-label">إجمالي قيمة العقود السارية</div><div class="stat-value">${money(totalRent)}</div></div>
+      <div class="stat-card accent"><div class="stat-label">نسبة التحصيل</div><div class="stat-value">${collectionRate}%</div></div>
     </div>
     <div class="panel">
-      <div class="panel-head"><h2>الدفعات القادمة</h2></div>
-      ${upcoming.length ? `
+      <div class="panel-head"><h2>أعلى الوحدات مبالغ متبقية</h2></div>
+      ${topRemaining.length ? `
         <table class="data-table">
-          <thead><tr><th>المستأجر</th><th>المبلغ</th><th>تاريخ الاستحقاق</th><th>الحالة</th></tr></thead>
+          <thead><tr><th>المستأجر</th><th>الوحدة</th><th>المبلغ المتبقي</th><th>حالة الدفع</th></tr></thead>
           <tbody>
-            ${upcoming.map((p) => `
-              <tr>
-                <td>${tenantName(p.tenantId)}</td>
-                <td>${money(p.amount)}</td>
-                <td>${p.dueDate}</td>
-                <td>${statusBadge(p.status)}</td>
-              </tr>
-            `).join("")}
+            ${topRemaining.map(({ c, remaining }) => {
+              const unit = units.find((u) => u.id === c.unitId);
+              return `
+                <tr>
+                  <td>${tenantName(c.tenantId)}</td>
+                  <td>${unit ? `${propertyName(unit.propertyId)} - ${unit.number}` : "—"}</td>
+                  <td>${money(remaining)}</td>
+                  <td>${statusBadge(paymentStatusOf(c))}</td>
+                </tr>
+              `;
+            }).join("")}
           </tbody>
         </table>
-      ` : `<div class="empty-state">لا توجد دفعات قادمة.</div>`}
+      ` : `<div class="empty-state">لا توجد مبالغ متبقية حاليًا. 👍</div>`}
     </div>
   `;
-}
-
-/* ---------- properties ---------- */
-function renderProperties() {
-  const properties = DataStore.getProperties();
-  const units = DataStore.getUnits();
-
-  els.content.innerHTML = `
-    <div class="panel">
-      <div class="panel-head">
-        <h2>العقارات (${properties.length})</h2>
-        <button class="btn btn-primary" id="addPropertyBtn">+ إضافة عقار</button>
-      </div>
-      <table class="data-table">
-        <thead><tr><th>اسم العقار</th><th>المدينة</th><th>عدد الوحدات</th><th>نسبة الإشغال</th></tr></thead>
-        <tbody>
-          ${properties.map((p) => {
-            const pUnits = units.filter((u) => u.propertyId === p.id);
-            const occ = pUnits.filter((u) => u.status === "occupied").length;
-            const rate = pUnits.length ? Math.round((occ / pUnits.length) * 100) : 0;
-            return `<tr><td>${p.name}</td><td>${p.city}</td><td>${pUnits.length || p.unitsCount}</td><td>${rate}%</td></tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h2>الوحدات (${units.length})</h2></div>
-      <table class="data-table">
-        <thead><tr><th>العقار</th><th>رقم الوحدة</th><th>الإيجار السنوي</th><th>الحالة</th></tr></thead>
-        <tbody>
-          ${units.map((u) => `
-            <tr>
-              <td>${propertyName(u.propertyId)}</td>
-              <td>${u.number}</td>
-              <td>${money(u.rent)}</td>
-              <td>${statusBadge(u.status)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-  `;
-
-  document.getElementById("addPropertyBtn").addEventListener("click", () => {
-    openModal(`
-      <h3>إضافة عقار جديد</h3>
-      <form class="modal-form" id="propertyForm">
-        <label>اسم العقار <input type="text" name="name" required></label>
-        <label>المدينة <input type="text" name="city" required></label>
-        <label>عدد الوحدات <input type="number" name="unitsCount" min="1" value="1" required></label>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
-          <button type="submit" class="btn btn-primary">حفظ</button>
-        </div>
-      </form>
-    `);
-    document.getElementById("cancelModal").addEventListener("click", closeModal);
-    document.getElementById("propertyForm").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      const properties = DataStore.getProperties();
-      properties.push({
-        id: DataStore.uid("p"),
-        name: f.name.value.trim(),
-        city: f.city.value.trim(),
-        unitsCount: Number(f.unitsCount.value),
-      });
-      DataStore.saveProperties(properties);
-      closeModal();
-      renderProperties();
-    });
-  });
-}
-
-/* ---------- tenants ---------- */
-function renderTenants() {
-  const tenants = DataStore.getTenants();
-  const units = DataStore.getUnits();
-
-  els.content.innerHTML = `
-    <div class="panel">
-      <div class="panel-head">
-        <h2>المستأجرون (${tenants.length})</h2>
-        <button class="btn btn-primary" id="addTenantBtn">+ إضافة مستأجر</button>
-      </div>
-      ${tenants.length ? `
-        <table class="data-table">
-          <thead><tr><th>الاسم</th><th>الجوال</th><th>الوحدة</th></tr></thead>
-          <tbody>
-            ${tenants.map((t) => `
-              <tr><td>${t.name}</td><td>${t.phone}</td><td>${unitLabel(t.unitId)}</td></tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<div class="empty-state">لا يوجد مستأجرون بعد.</div>`}
-    </div>
-  `;
-
-  document.getElementById("addTenantBtn").addEventListener("click", () => {
-    const vacant = units.filter((u) => u.status === "vacant");
-    openModal(`
-      <h3>إضافة مستأجر جديد</h3>
-      <form class="modal-form" id="tenantForm">
-        <label>الاسم <input type="text" name="name" required></label>
-        <label>رقم الجوال <input type="text" name="phone" required></label>
-        <label>الوحدة
-          <select name="unitId" required>
-            ${vacant.length ? vacant.map((u) => `<option value="${u.id}">${unitLabel(u.id)}</option>`).join("") : `<option value="">لا توجد وحدات شاغرة</option>`}
-          </select>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
-          <button type="submit" class="btn btn-primary">حفظ</button>
-        </div>
-      </form>
-    `);
-    document.getElementById("cancelModal").addEventListener("click", closeModal);
-    document.getElementById("tenantForm").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      if (!f.unitId.value) { closeModal(); return; }
-      const tenants2 = DataStore.getTenants();
-      tenants2.push({ id: DataStore.uid("t"), name: f.name.value.trim(), phone: f.phone.value.trim(), unitId: f.unitId.value });
-      DataStore.saveTenants(tenants2);
-
-      const units2 = DataStore.getUnits();
-      const unit = units2.find((u) => u.id === f.unitId.value);
-      if (unit) unit.status = "occupied";
-      DataStore.saveUnits(units2);
-
-      closeModal();
-      renderTenants();
-    });
-  });
-}
-
-/* ---------- contracts ---------- */
-function renderContracts() {
-  const contracts = DataStore.getContracts();
-  const tenants = DataStore.getTenants();
-
-  els.content.innerHTML = `
-    <div class="panel">
-      <div class="panel-head">
-        <h2>العقود (${contracts.length})</h2>
-        <button class="btn btn-primary" id="addContractBtn">+ عقد جديد</button>
-      </div>
-      ${contracts.length ? `
-        <table class="data-table">
-          <thead><tr><th>المستأجر</th><th>الوحدة</th><th>البداية</th><th>النهاية</th><th>الإيجار</th><th>الحالة</th></tr></thead>
-          <tbody>
-            ${contracts.map((c) => `
-              <tr>
-                <td>${tenantName(c.tenantId)}</td>
-                <td>${unitLabel(c.unitId)}</td>
-                <td>${c.start}</td>
-                <td>${c.end}</td>
-                <td>${money(c.rent)}</td>
-                <td>${statusBadge(c.status)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<div class="empty-state">لا توجد عقود بعد.</div>`}
-    </div>
-  `;
-
-  document.getElementById("addContractBtn").addEventListener("click", () => {
-    if (!tenants.length) { openModal(`<h3>لا يوجد مستأجرون</h3><p style="color:var(--text-dim);font-size:.88rem;">أضف مستأجرًا أولًا قبل إنشاء عقد.</p><div class="modal-actions"><button class="btn btn-outline" id="cancelModal">إغلاق</button></div>`); document.getElementById("cancelModal").addEventListener("click", closeModal); return; }
-    openModal(`
-      <h3>إنشاء عقد جديد</h3>
-      <form class="modal-form" id="contractForm">
-        <label>المستأجر
-          <select name="tenantId" required>
-            ${tenants.map((t) => `<option value="${t.id}" data-unit="${t.unitId}">${t.name}</option>`).join("")}
-          </select>
-        </label>
-        <label>تاريخ البداية <input type="date" name="start" required></label>
-        <label>تاريخ النهاية <input type="date" name="end" required></label>
-        <label>الإيجار السنوي <input type="number" name="rent" min="0" required></label>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
-          <button type="submit" class="btn btn-primary">حفظ</button>
-        </div>
-      </form>
-    `);
-    document.getElementById("cancelModal").addEventListener("click", closeModal);
-    document.getElementById("contractForm").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      const tenant = tenants.find((t) => t.id === f.tenantId.value);
-      const contracts2 = DataStore.getContracts();
-      contracts2.push({
-        id: DataStore.uid("c"),
-        tenantId: f.tenantId.value,
-        unitId: tenant ? tenant.unitId : "",
-        start: f.start.value,
-        end: f.end.value,
-        rent: Number(f.rent.value),
-        status: "active",
-      });
-      DataStore.saveContracts(contracts2);
-      closeModal();
-      renderContracts();
-    });
-  });
-}
-
-/* ---------- collections ---------- */
-function renderCollections() {
-  const payments = DataStore.getPayments().sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-
-  els.content.innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h2>سجل التحصيلات (${payments.length})</h2></div>
-      ${payments.length ? `
-        <table class="data-table">
-          <thead><tr><th>المستأجر</th><th>المبلغ</th><th>تاريخ الاستحقاق</th><th>الحالة</th><th></th></tr></thead>
-          <tbody>
-            ${payments.map((p) => `
-              <tr>
-                <td>${tenantName(p.tenantId)}</td>
-                <td>${money(p.amount)}</td>
-                <td>${p.dueDate}</td>
-                <td>${statusBadge(p.status)}</td>
-                <td class="table-actions">
-                  ${p.status !== "paid" ? `<button class="link-btn" data-pay="${p.id}">تحديد كمدفوع</button>` : ""}
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<div class="empty-state">لا توجد دفعات مسجلة.</div>`}
-    </div>
-  `;
-
-  els.content.querySelectorAll("[data-pay]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const list = DataStore.getPayments();
-      const pay = list.find((p) => p.id === btn.dataset.pay);
-      if (pay) pay.status = "paid";
-      DataStore.savePayments(list);
-      renderCollections();
-    });
-  });
-}
-
-/* ---------- maintenance ---------- */
-function renderMaintenance() {
-  const items = DataStore.getMaintenance();
-  const nextStatus = { open: "in_progress", in_progress: "closed" };
-  const nextLabel = { open: "بدء التنفيذ", in_progress: "إغلاق الطلب" };
-
-  els.content.innerHTML = `
-    <div class="panel">
-      <div class="panel-head">
-        <h2>طلبات الصيانة (${items.length})</h2>
-        <button class="btn btn-primary" id="addMaintenanceBtn">+ طلب صيانة</button>
-      </div>
-      ${items.length ? `
-        <table class="data-table">
-          <thead><tr><th>الوحدة</th><th>الوصف</th><th>تاريخ الطلب</th><th>الحالة</th><th></th></tr></thead>
-          <tbody>
-            ${items.map((m) => `
-              <tr>
-                <td>${unitLabel(m.unitId)}</td>
-                <td>${m.title}</td>
-                <td>${m.createdAt}</td>
-                <td>${statusBadge(m.status)}</td>
-                <td class="table-actions">
-                  ${nextStatus[m.status] ? `<button class="link-btn" data-advance="${m.id}">${nextLabel[m.status]}</button>` : ""}
-                </td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<div class="empty-state">لا توجد طلبات صيانة.</div>`}
-    </div>
-  `;
-
-  els.content.querySelectorAll("[data-advance]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const list = DataStore.getMaintenance();
-      const item = list.find((m) => m.id === btn.dataset.advance);
-      if (item && nextStatus[item.status]) item.status = nextStatus[item.status];
-      DataStore.saveMaintenance(list);
-      renderMaintenance();
-    });
-  });
-
-  document.getElementById("addMaintenanceBtn").addEventListener("click", () => {
-    const units = DataStore.getUnits();
-    openModal(`
-      <h3>طلب صيانة جديد</h3>
-      <form class="modal-form" id="maintenanceForm">
-        <label>الوحدة
-          <select name="unitId" required>
-            ${units.map((u) => `<option value="${u.id}">${unitLabel(u.id)}</option>`).join("")}
-          </select>
-        </label>
-        <label>وصف العطل <input type="text" name="title" required></label>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
-          <button type="submit" class="btn btn-primary">إرسال</button>
-        </div>
-      </form>
-    `);
-    document.getElementById("cancelModal").addEventListener("click", closeModal);
-    document.getElementById("maintenanceForm").addEventListener("submit", (e) => {
-      e.preventDefault();
-      const f = e.target;
-      const list = DataStore.getMaintenance();
-      list.push({
-        id: DataStore.uid("m"),
-        unitId: f.unitId.value,
-        title: f.title.value.trim(),
-        status: "open",
-        createdAt: new Date().toISOString().slice(0, 10),
-      });
-      DataStore.saveMaintenance(list);
-      closeModal();
-      renderMaintenance();
-    });
-  });
-}
-
-/* ---------- AI assistant (local, rule-based — no external API) ---------- */
-function renderAI() {
-  els.content.innerHTML = `
-    <div class="chat-panel">
-      <div class="chat-messages" id="chatMessages">
-        <div class="chat-msg bot">
-          أهلًا ${session.name}! أنا مساعدك الذكي. اسألني عن المتأخرات، نسبة الإشغال، العقود المنتهية، أو طلبات الصيانة المفتوحة.
-        </div>
-      </div>
-      <div class="chat-suggestions">
-        <button class="chat-chip" data-q="من المستأجرين المتأخرين؟">من المستأجرين المتأخرين؟</button>
-        <button class="chat-chip" data-q="ما نسبة الإشغال؟">ما نسبة الإشغال؟</button>
-        <button class="chat-chip" data-q="ما العقود التي تنتهي قريبًا؟">عقود تنتهي قريبًا</button>
-        <button class="chat-chip" data-q="ما طلبات الصيانة المفتوحة؟">طلبات الصيانة المفتوحة</button>
-      </div>
-      <form class="chat-input-row" id="chatForm">
-        <input type="text" id="chatInput" placeholder="اكتب طلبك هنا..." autocomplete="off">
-        <button type="submit" class="btn btn-primary">إرسال</button>
-      </form>
-    </div>
-  `;
-
-  const messages = document.getElementById("chatMessages");
-  const form = document.getElementById("chatForm");
-  const input = document.getElementById("chatInput");
-
-  document.querySelectorAll(".chat-chip").forEach((chip) => {
-    chip.addEventListener("click", () => {
-      input.value = chip.dataset.q;
-      form.dispatchEvent(new Event("submit"));
-    });
-  });
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text) return;
-    addMsg(text, "user");
-    input.value = "";
-    setTimeout(() => addMsg(answerQuery(text), "bot"), 300);
-  });
-
-  function addMsg(html, who) {
-    const div = document.createElement("div");
-    div.className = "chat-msg " + who;
-    div.innerHTML = html;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  function answerQuery(text) {
-    const q = text.toLowerCase();
-    const payments = DataStore.getPayments();
-    const units = DataStore.getUnits();
-    const contracts = DataStore.getContracts();
-    const maintenance = DataStore.getMaintenance();
-
-    if (q.includes("متأخر")) {
-      const late = payments.filter((p) => p.status === "late");
-      if (!late.length) return "لا يوجد مستأجرون متأخرون حاليًا. 👍";
-      return `وجدت ${late.length} دفعة متأخرة:<ul>${late.map((p) => `<li>${tenantName(p.tenantId)} — ${money(p.amount)} (استحق في ${p.dueDate})</li>`).join("")}</ul>هل تريد إرسال تذكير دفع لهم؟ (هذا عرض توضيحي فقط)`;
-    }
-    if (q.includes("إشغال") || q.includes("اشغال")) {
-      const occ = units.filter((u) => u.status === "occupied").length;
-      const rate = units.length ? Math.round((occ / units.length) * 100) : 0;
-      return `نسبة الإشغال الحالية هي <strong>${rate}%</strong> (${occ} من أصل ${units.length} وحدة).`;
-    }
-    if (q.includes("عقد") || q.includes("تجديد") || q.includes("تنتهي")) {
-      const expiring = contracts.filter((c) => c.status === "expiring");
-      if (!expiring.length) return "لا توجد عقود تنتهي قريبًا.";
-      return `لديك ${expiring.length} عقد على وشك الانتهاء:<ul>${expiring.map((c) => `<li>${tenantName(c.tenantId)} — ${unitLabel(c.unitId)} (ينتهي في ${c.end})</li>`).join("")}</ul>`;
-    }
-    if (q.includes("صيانة")) {
-      const open = maintenance.filter((m) => m.status !== "closed");
-      if (!open.length) return "لا توجد طلبات صيانة مفتوحة حاليًا. 👍";
-      return `يوجد ${open.length} طلب صيانة قيد المتابعة:<ul>${open.map((m) => `<li>${unitLabel(m.unitId)} — ${m.title} (${m.status === "open" ? "مفتوح" : "قيد التنفيذ"})</li>`).join("")}</ul>`;
-    }
-    return `لم أفهم طلبك بعد. جرّب أحد الأسئلة المقترحة أدناه، أو اسأل عن "المتأخرات" أو "نسبة الإشغال" أو "الصيانة" أو "العقود".`;
-  }
 }
 
 router();
