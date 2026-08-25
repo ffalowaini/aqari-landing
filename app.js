@@ -456,7 +456,10 @@ function renderAdmin() {
                   <td>${p.name}</td>
                   <td>${p.city}</td>
                   <td>${count}</td>
-                  <td class="table-actions"><button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button></td>
+                  <td class="table-actions">
+                    <button class="link-btn" data-edit-property="${p.id}">تعديل</button>
+                    <button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button>
+                  </td>
                 </tr>
               `;
             }).join("")}
@@ -477,7 +480,10 @@ function renderAdmin() {
                 <td>${u.number}</td>
                 <td>${u.street || "—"}</td>
                 <td>${statusBadge(u.status)}</td>
-                <td class="table-actions"><button class="link-btn link-danger" data-del-unit="${u.id}">حذف الوحدة</button></td>
+                <td class="table-actions">
+                  <button class="link-btn" data-edit-unit="${u.id}">تعديل</button>
+                  <button class="link-btn link-danger" data-del-unit="${u.id}">حذف الوحدة</button>
+                </td>
               </tr>
             `).join("")}
           </tbody>
@@ -485,6 +491,13 @@ function renderAdmin() {
       ` : `<div class="empty-state">لا توجد وحدات بعد.</div>`}
     </div>
   `;
+
+  els.content.querySelectorAll("[data-edit-property]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty));
+  });
+  els.content.querySelectorAll("[data-edit-unit]").forEach((btn) => {
+    btn.addEventListener("click", () => openEditUnitModal(btn.dataset.editUnit));
+  });
 
   els.content.querySelectorAll("[data-del-property]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -508,6 +521,101 @@ function renderAdmin() {
         : `سيتم حذف الوحدة "${unit.number}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
       openConfirmModal(message, () => { deleteUnit(id); renderAdmin(); });
     });
+  });
+}
+
+function openEditPropertyModal(propertyId) {
+  const properties = DataStore.getProperties();
+  const property = properties.find((p) => p.id === propertyId);
+  if (!property) return;
+
+  openModal(`
+    <h3>تعديل بيانات العقار</h3>
+    <form class="modal-form" id="editPropertyForm">
+      <label>اسم العقار <input type="text" name="name" value="${property.name}" required></label>
+      <label>المدينة <input type="text" name="city" value="${property.city}" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("editPropertyForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    property.name = f.name.value.trim();
+    property.city = f.city.value.trim();
+    DataStore.saveProperties(properties);
+    closeModal();
+    renderAdmin();
+  });
+}
+
+function openEditUnitModal(unitId) {
+  const properties = DataStore.getProperties();
+  const units = DataStore.getUnits();
+  const unit = units.find((u) => u.id === unitId);
+  if (!unit) return;
+
+  const contracts = DataStore.getContracts();
+  const contract = contractForUnit(unitId);
+  const tenants = DataStore.getTenants();
+  const tenant = contract ? tenants.find((t) => t.id === contract.tenantId) : null;
+
+  const startParts = contract ? getHijriParts(new Date(contract.start + "T00:00:00")) : todayHijri();
+
+  openModal(`
+    <h3>تعديل بيانات الوحدة</h3>
+    <form class="modal-form" id="editUnitForm">
+      <label>العقار
+        <select name="propertyId" required>
+          ${properties.map((p) => `<option value="${p.id}" ${p.id === unit.propertyId ? "selected" : ""}>${p.name}</option>`).join("")}
+        </select>
+      </label>
+      <label>رقم الوحدة <input type="text" name="number" value="${unit.number}" required></label>
+      <label>الشارع <input type="text" name="street" value="${unit.street || ""}" required></label>
+      ${tenant && contract ? `
+        <label>اسم المستأجر <input type="text" name="tenantName" value="${tenant.name}" required></label>
+        <label>رقم الجوال <input type="text" name="phone" value="${tenant.phone}" required></label>
+        <label>تاريخ بدء الإيجار (هجري)
+          ${hijriPickerHTML("start", startParts)}
+        </label>
+        <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${contract.rent}" required></label>
+        <label>عدد الأقساط <input type="number" name="installments" min="1" value="${contract.installments}" required></label>
+        <label>المبلغ المدفوع <input type="number" name="paidAmount" min="0" value="${contract.paidAmount}" required></label>
+      ` : ""}
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("editUnitForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+
+    unit.propertyId = f.propertyId.value;
+    unit.number = f.number.value.trim();
+    unit.street = f.street.value.trim();
+    DataStore.saveUnits(units);
+
+    if (tenant && contract) {
+      tenant.name = f.tenantName.value.trim();
+      tenant.phone = f.phone.value.trim();
+      DataStore.saveTenants(tenants);
+
+      const rent = Number(f.rent.value);
+      contract.start = readHijriPicker(f, "start");
+      contract.rent = rent;
+      contract.installments = Number(f.installments.value);
+      contract.paidAmount = Math.min(Number(f.paidAmount.value), rent);
+      DataStore.saveContracts(contracts);
+      unit.rent = rent;
+      DataStore.saveUnits(units);
+    }
+
+    closeModal();
+    renderAdmin();
   });
 }
 
