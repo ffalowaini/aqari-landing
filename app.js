@@ -39,6 +39,56 @@ function toHijri(isoDate) {
     year: "numeric", month: "long", day: "numeric",
   }).format(d) + " هـ";
 }
+
+/* ---------- Hijri date picker (Umm al-Qura, same calendar used for display) ---------- */
+const HIJRI_MONTHS = ["محرم", "صفر", "ربيع الأول", "ربيع الآخر", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
+
+function getHijriParts(date) {
+  const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", { year: "numeric", month: "numeric", day: "numeric" }).formatToParts(date);
+  const obj = {};
+  parts.forEach((p) => { if (p.type !== "literal") obj[p.type] = parseInt(p.value, 10); });
+  return { y: obj.year, m: obj.month, d: obj.day };
+}
+function todayHijri() {
+  return getHijriParts(new Date());
+}
+function hijriToGregorianISO(hy, hm, hd) {
+  const today = new Date();
+  const t0 = getHijriParts(today);
+  const approxDays = Math.round((hy - t0.y) * 354.367 + (hm - t0.m) * 29.5306 + (hd - t0.d));
+  const base = new Date(today);
+  base.setDate(base.getDate() + approxDays);
+
+  for (let day = hd; day >= 1; day--) {
+    for (let delta = -15; delta <= 15; delta++) {
+      const cand = new Date(base);
+      cand.setDate(cand.getDate() + delta);
+      const parts = getHijriParts(cand);
+      if (parts.y === hy && parts.m === hm && parts.d === day) {
+        return cand.toISOString().slice(0, 10);
+      }
+    }
+  }
+  return base.toISOString().slice(0, 10);
+}
+function hijriPickerHTML(prefix, defaultParts) {
+  const days = Array.from({ length: 30 }, (_, i) => i + 1);
+  const years = [];
+  for (let y = defaultParts.y - 3; y <= defaultParts.y + 2; y++) years.push(y);
+  return `
+    <div class="hijri-picker">
+      <select name="${prefix}Day">${days.map((d) => `<option value="${d}" ${d === defaultParts.d ? "selected" : ""}>${d}</option>`).join("")}</select>
+      <select name="${prefix}Month">${HIJRI_MONTHS.map((m, i) => `<option value="${i + 1}" ${i + 1 === defaultParts.m ? "selected" : ""}>${m}</option>`).join("")}</select>
+      <select name="${prefix}Year">${years.map((y) => `<option value="${y}" ${y === defaultParts.y ? "selected" : ""}>${y} هـ</option>`).join("")}</select>
+    </div>
+  `;
+}
+function readHijriPicker(form, prefix) {
+  const hy = Number(form[prefix + "Year"].value);
+  const hm = Number(form[prefix + "Month"].value);
+  const hd = Number(form[prefix + "Day"].value);
+  return hijriToGregorianISO(hy, hm, hd);
+}
 function contractForUnit(unitId) {
   return DataStore.getContracts()
     .filter((c) => c.unitId === unitId)
@@ -231,10 +281,9 @@ function openRentOutModal(unitId) {
     <form class="modal-form" id="rentOutForm">
       <label>اسم المستأجر <input type="text" name="tenantName" required></label>
       <label>رقم الجوال <input type="text" name="phone" required></label>
-      <label>تاريخ بدء الإيجار
-        <input type="date" name="start" required>
+      <label>تاريخ بدء الإيجار (هجري)
+        ${hijriPickerHTML("start", todayHijri())}
       </label>
-      <p style="margin:-6px 0 0;font-size:.76rem;color:var(--text-dim);">سيُعرض التاريخ في صفحة الوحدات بالتقويم الهجري تلقائيًا.</p>
       <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" required></label>
       <label>عدد الأقساط <input type="number" name="installments" min="1" value="1" required></label>
       <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
@@ -260,7 +309,7 @@ function openRentOutModal(unitId) {
       id: DataStore.uid("c"),
       tenantId: tenant.id,
       unitId,
-      start: f.start.value,
+      start: readHijriPicker(f, "start"),
       rent,
       installments: Number(f.installments.value),
       paidAmount,

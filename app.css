@@ -82,10 +82,10 @@
   display:inline-flex;align-items:center;padding:4px 12px;border-radius:999px;
   font-size:.76rem;font-weight:700;
 }
-.badge-green{background:rgba(74,222,128,.15);color:#4ade80;}
-.badge-orange{background:rgba(255,138,61,.15);color:var(--warn);}
-.badge-red{background:rgba(255,90,90,.15);color:#ff8a8a;}
-.badge-blue{background:rgba(94,234,212,.15);color:#5eead4;}
+.badge-green{background:rgba(22,163,74,.12);color:#15803d;}
+.badge-orange{background:rgba(194,84,15,.12);color:var(--warn);}
+.badge-red{background:rgba(220,38,38,.12);color:#dc2626;}
+.badge-blue{background:rgba(15,118,110,.12);color:#0f766e;}
 .badge-gray{background:var(--surface-2);color:var(--text-dim);}
 
 .table-actions{display:flex;gap:8px;}
@@ -100,7 +100,7 @@
 
 /* MODAL */
 .modal-overlay{
-  display:none;position:fixed;inset:0;background:rgba(4,8,16,.7);
+  display:none;position:fixed;inset:0;background:rgba(21,32,24,.45);
   align-items:center;justify-content:center;z-index:100;padding:20px;
 }
 .modal-overlay.open{display:flex;}
@@ -117,6 +117,9 @@
 }
 .modal-actions{display:flex;gap:10px;margin-top:6px;}
 .modal-actions .btn{flex:1;}
+
+.hijri-picker{display:flex;gap:8px;}
+.hijri-picker select{flex:1;min-width:0;}
 
 @media (max-width:960px){
   .stat-grid{grid-template-columns:repeat(2,1fr);}

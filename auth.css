@@ -3,8 +3,8 @@
   display:flex;align-items:center;justify-content:center;
   padding:40px 20px;
   background:
-    radial-gradient(circle at 20% 20%, rgba(34,160,107,.18), transparent 40%),
-    radial-gradient(circle at 80% 80%, rgba(201,162,75,.12), transparent 40%),
+    radial-gradient(circle at 20% 20%, rgba(21,112,72,.08), transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(169,118,26,.06), transparent 40%),
     var(--bg);
 }
 .auth-card{
@@ -20,8 +20,8 @@
 .auth-sub{color:var(--text-dim);font-size:.9rem;text-align:center;margin-bottom:26px;}
 
 .auth-error{
-  display:none;background:rgba(255,90,90,.12);border:1px solid rgba(255,90,90,.4);
-  color:#ff9d9d;padding:10px 14px;border-radius:10px;font-size:.85rem;margin-bottom:18px;
+  display:none;background:rgba(220,38,38,.08);border:1px solid rgba(220,38,38,.35);
+  color:#b91c1c;padding:10px 14px;border-radius:10px;font-size:.85rem;margin-bottom:18px;
 }
 .auth-error.visible{display:block;}
 
