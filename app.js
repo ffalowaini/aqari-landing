@@ -103,6 +103,7 @@ function paymentStatusOf(contract) {
 function statusBadge(status) {
   const map = {
     vacant: ["شاغرة", "badge-gray"],
+    occupied: ["مؤجرة", "badge-green"],
     not_started: ["لم يبدأ السداد", "badge-red"],
     partial: ["سداد جزئي", "badge-orange"],
     paid_full: ["مكتمل السداد", "badge-green"],
@@ -120,11 +121,26 @@ function closeModal() {
   els.modalOverlay.classList.remove("open");
   els.modalBody.innerHTML = "";
 }
+function openConfirmModal(message, onConfirm) {
+  openModal(`
+    <h3>تأكيد الحذف</h3>
+    <p style="color:var(--text-dim);font-size:.9rem;line-height:1.7;">${message}</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+      <button type="button" class="btn btn-danger" id="confirmDeleteBtn">حذف نهائيًا</button>
+    </div>
+  `);
+  document.getElementById("confirmDeleteBtn").addEventListener("click", () => {
+    onConfirm();
+    closeModal();
+  });
+}
 
 /* ---------- router ---------- */
 const routes = {
   units: { title: "الوحدات", render: renderUnits },
   overview: { title: "لوحة المعلومات", render: renderOverview },
+  admin: { title: "الإدارة", render: renderAdmin },
 };
 
 function router() {
@@ -404,6 +420,95 @@ function renderOverview() {
       ` : `<div class="empty-state">لا توجد مبالغ متبقية حاليًا. 👍</div>`}
     </div>
   `;
+}
+
+/* ---------- الإدارة (admin: delete properties & units) ---------- */
+function deleteProperty(propertyId) {
+  const units = DataStore.getUnits();
+  const removedUnitIds = units.filter((u) => u.propertyId === propertyId).map((u) => u.id);
+
+  DataStore.saveProperties(DataStore.getProperties().filter((p) => p.id !== propertyId));
+  DataStore.saveUnits(units.filter((u) => u.propertyId !== propertyId));
+  DataStore.saveTenants(DataStore.getTenants().filter((t) => !removedUnitIds.includes(t.unitId)));
+  DataStore.saveContracts(DataStore.getContracts().filter((c) => !removedUnitIds.includes(c.unitId)));
+}
+function deleteUnit(unitId) {
+  DataStore.saveUnits(DataStore.getUnits().filter((u) => u.id !== unitId));
+  DataStore.saveTenants(DataStore.getTenants().filter((t) => t.unitId !== unitId));
+  DataStore.saveContracts(DataStore.getContracts().filter((c) => c.unitId !== unitId));
+}
+
+function renderAdmin() {
+  const properties = DataStore.getProperties();
+  const units = DataStore.getUnits();
+
+  els.content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><h2>العقارات (${properties.length})</h2></div>
+      ${properties.length ? `
+        <table class="data-table">
+          <thead><tr><th>اسم العقار</th><th>المدينة</th><th>عدد الوحدات</th><th></th></tr></thead>
+          <tbody>
+            ${properties.map((p) => {
+              const count = units.filter((u) => u.propertyId === p.id).length;
+              return `
+                <tr>
+                  <td>${p.name}</td>
+                  <td>${p.city}</td>
+                  <td>${count}</td>
+                  <td class="table-actions"><button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      ` : `<div class="empty-state">لا توجد عقارات بعد.</div>`}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>الوحدات (${units.length})</h2></div>
+      ${units.length ? `
+        <table class="data-table">
+          <thead><tr><th>العقار</th><th>الوحدة</th><th>الشارع</th><th>الحالة</th><th></th></tr></thead>
+          <tbody>
+            ${units.map((u) => `
+              <tr>
+                <td>${propertyName(u.propertyId)}</td>
+                <td>${u.number}</td>
+                <td>${u.street || "—"}</td>
+                <td>${statusBadge(u.status)}</td>
+                <td class="table-actions"><button class="link-btn link-danger" data-del-unit="${u.id}">حذف الوحدة</button></td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      ` : `<div class="empty-state">لا توجد وحدات بعد.</div>`}
+    </div>
+  `;
+
+  els.content.querySelectorAll("[data-del-property]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.delProperty;
+      const property = properties.find((p) => p.id === id);
+      const affectedUnits = units.filter((u) => u.propertyId === id).length;
+      const message = affectedUnits
+        ? `سيتم حذف العقار "${property.name}" نهائيًا، بالإضافة إلى ${affectedUnits} وحدة وكل بيانات المستأجرين والعقود المرتبطة بها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف العقار "${property.name}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
+      openConfirmModal(message, () => { deleteProperty(id); renderAdmin(); });
+    });
+  });
+
+  els.content.querySelectorAll("[data-del-unit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.delUnit;
+      const unit = units.find((u) => u.id === id);
+      const hasContract = !!contractForUnit(id);
+      const message = hasContract
+        ? `سيتم حذف الوحدة "${unit.number}" نهائيًا، بالإضافة إلى بيانات المستأجر والعقد المرتبطين بها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف الوحدة "${unit.number}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
+      openConfirmModal(message, () => { deleteUnit(id); renderAdmin(); });
+    });
+  });
 }
 
 router();
