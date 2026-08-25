@@ -176,6 +176,14 @@ function router() {
     els.sidebar.classList.remove("open");
     return;
   }
+  if (routeKey === "unit" && param) {
+    els.title.textContent = "تفاصيل الوحدة";
+    document.querySelectorAll(".sidebar-nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === "units"));
+    els.content.innerHTML = "";
+    renderUnitDetails(param);
+    els.sidebar.classList.remove("open");
+    return;
+  }
 
   const route = routes[routeKey] || routes.units;
   els.title.textContent = route.title;
@@ -201,7 +209,7 @@ function renderUnits() {
     return `
       <tr>
         <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${propertyName(u.propertyId)}</button></td>
-        <td>${u.number}</td>
+        <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
         <td>${u.street || "—"}</td>
         <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
         <td>${contract ? toHijri(contract.start) : "—"}</td>
@@ -250,6 +258,9 @@ function renderUnits() {
 
   els.content.querySelectorAll("[data-view-property]").forEach((btn) => {
     btn.addEventListener("click", () => { window.location.hash = `#property/${btn.dataset.viewProperty}`; });
+  });
+  els.content.querySelectorAll("[data-view-unit]").forEach((btn) => {
+    btn.addEventListener("click", () => { window.location.hash = `#unit/${btn.dataset.viewUnit}`; });
   });
   els.content.querySelectorAll("[data-record-payment]").forEach((btn) => {
     btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment));
@@ -479,7 +490,7 @@ function renderPropertyDetails(propertyId) {
                 const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
                 return `
                   <tr>
-                    <td>${unit.number}</td>
+                    <td><button class="link-btn cell-link" data-view-unit="${unit.id}">${unit.number}</button></td>
                     <td>${unit.street || "—"}</td>
                     <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
                     <td>${contract ? money(contract.rent) : "—"}</td>
@@ -522,12 +533,82 @@ function renderPropertyDetails(propertyId) {
     </div>
   `;
 
+  els.content.querySelectorAll("[data-view-unit]").forEach((btn) => {
+    btn.addEventListener("click", () => { window.location.hash = `#unit/${btn.dataset.viewUnit}`; });
+  });
   els.content.querySelectorAll("[data-record-payment]").forEach((btn) => {
     btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment, () => renderPropertyDetails(propertyId)));
   });
   els.content.querySelectorAll("[data-rent-out]").forEach((btn) => {
     btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut, () => renderPropertyDetails(propertyId)));
   });
+}
+
+/* ---------- تفاصيل الوحدة ---------- */
+function renderUnitDetails(unitId) {
+  const unit = DataStore.getUnits().find((u) => u.id === unitId);
+  if (!unit) {
+    els.content.innerHTML = `<div class="empty-state">هذه الوحدة غير موجودة أو تم حذفها.<br><a href="#units" class="link-btn" style="margin-top:10px;display:inline-block;">العودة للوحدات</a></div>`;
+    return;
+  }
+
+  const contract = DataStore.getContracts()
+    .filter((c) => c.unitId === unitId)
+    .sort((a, b) => b.start.localeCompare(a.start))[0];
+  const paid = contract ? contractPaidAmount(contract) : 0;
+  const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
+  const payments = contract ? [...(contract.payments || [])].sort((a, b) => b.date.localeCompare(a.date)) : [];
+
+  els.content.innerHTML = `
+    <a href="#property/${unit.propertyId}" class="link-btn" style="display:inline-block;margin-bottom:16px;">→ العودة لتفاصيل العقار</a>
+
+    ${contract ? `
+      <div class="stat-grid">
+        <div class="stat-card"><div class="stat-label">قيمة الإيجار</div><div class="stat-value">${money(contract.rent)}</div></div>
+        <div class="stat-card accent"><div class="stat-label">المدفوع</div><div class="stat-value">${money(paid)}</div></div>
+        <div class="stat-card warn"><div class="stat-label">المتبقي</div><div class="stat-value">${money(remaining)}</div></div>
+        <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(paymentStatusOf(contract))}</div></div>
+      </div>
+    ` : ""}
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>${propertyName(unit.propertyId)} — وحدة ${unit.number}</h2>
+        ${contract ? `<button class="btn btn-primary" id="recordPaymentBtn">تسجيل دفعة</button>` : `<button class="btn btn-primary" id="rentOutBtn">تأجير الوحدة</button>`}
+      </div>
+      <div style="padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;color:var(--text-dim);font-size:.88rem;">
+        <div>الشارع<br><strong style="color:var(--text);">${unit.street || "—"}</strong></div>
+        <div>المستأجر<br><strong style="color:var(--text);">${contract ? tenantName(contract.tenantId) : "—"}</strong></div>
+        <div>تاريخ بدء الإيجار (هجري)<br><strong style="color:var(--text);">${contract ? toHijri(contract.start) : "—"}</strong></div>
+        <div>عدد الأقساط<br><strong style="color:var(--text);">${contract ? contract.installments : "—"}</strong></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>سجل المدفوعات لهذه الوحدة (${payments.length})</h2></div>
+      ${payments.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>التاريخ (هجري)</th><th>المبلغ</th><th>طريقة الدفع</th></tr></thead>
+            <tbody>
+              ${payments.map((p) => `
+                <tr>
+                  <td>${toHijri(p.date)}</td>
+                  <td>${money(p.amount)}</td>
+                  <td>${p.method}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">لا توجد مدفوعات مسجلة لهذه الوحدة بعد.</div>`}
+    </div>
+  `;
+
+  const recordBtn = document.getElementById("recordPaymentBtn");
+  if (recordBtn) recordBtn.addEventListener("click", () => openRecordPaymentModal(contract.id, () => renderUnitDetails(unitId)));
+  const rentOutBtn = document.getElementById("rentOutBtn");
+  if (rentOutBtn) rentOutBtn.addEventListener("click", () => openRentOutModal(unit.id, () => renderUnitDetails(unitId)));
 }
 
 /* ---------- لوحة المعلومات (dashboard overview) ---------- */
@@ -713,7 +794,7 @@ function renderAdmin() {
             ${units.map((u) => `
               <tr>
                 <td>${propertyName(u.propertyId)}</td>
-                <td>${u.number}</td>
+                <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
                 <td>${u.street || "—"}</td>
                 <td>${statusBadge(u.status)}</td>
                 <td class="table-actions">
@@ -740,6 +821,9 @@ function renderAdmin() {
 
   els.content.querySelectorAll("[data-view-property]").forEach((btn) => {
     btn.addEventListener("click", () => { window.location.hash = `#property/${btn.dataset.viewProperty}`; });
+  });
+  els.content.querySelectorAll("[data-view-unit]").forEach((btn) => {
+    btn.addEventListener("click", () => { window.location.hash = `#unit/${btn.dataset.viewUnit}`; });
   });
   els.content.querySelectorAll("[data-edit-property]").forEach((btn) => {
     btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty));
