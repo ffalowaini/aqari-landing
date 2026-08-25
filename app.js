@@ -558,7 +558,7 @@ function openEditUnitModal(unitId) {
   if (!unit) return;
 
   const contracts = DataStore.getContracts();
-  const contract = contractForUnit(unitId);
+  const contract = contracts.filter((c) => c.unitId === unitId).sort((a, b) => b.start.localeCompare(a.start))[0];
   const tenants = DataStore.getTenants();
   const tenant = contract ? tenants.find((t) => t.id === contract.tenantId) : null;
 
