@@ -12,7 +12,7 @@ const DB_KEYS = {
   units: "aqari_units",
   tenants: "aqari_tenants",
   contracts: "aqari_contracts",
-  seeded: "aqari_seeded_v3",
+  seeded: "aqari_seeded_v4",
 };
 
 function readDB(key) {
@@ -44,6 +44,7 @@ function seedIfNeeded() {
           : [];
       }
       delete c.paidAmount;
+      if (c.active === undefined) c.active = true;
     });
     writeDB(DB_KEYS.units, existingUnits);
     writeDB(DB_KEYS.contracts, existingContracts);
@@ -77,7 +78,7 @@ function seedIfNeeded() {
 
   const contracts = [
     {
-      id: "c1", tenantId: "t1", unitId: "u1", start: "2025-09-01", rent: 32000, installments: 12,
+      id: "c1", tenantId: "t1", unitId: "u1", start: "2025-09-01", rent: 32000, installments: 12, active: true,
       payments: [
         { id: "pay1", amount: 12000, method: "نقدي", date: "2025-09-01" },
         { id: "pay2", amount: 12000, method: "تحويل بنكي", date: "2025-11-05" },
@@ -85,18 +86,18 @@ function seedIfNeeded() {
       ],
     },
     {
-      id: "c2", tenantId: "t2", unitId: "u2", start: "2025-10-15", rent: 34000, installments: 4,
+      id: "c2", tenantId: "t2", unitId: "u2", start: "2025-10-15", rent: 34000, installments: 4, active: true,
       payments: [
         { id: "pay4", amount: 8500, method: "تحويل بنكي", date: "2025-10-15" },
         { id: "pay5", amount: 8500, method: "تحويل بنكي", date: "2026-01-15" },
       ],
     },
     {
-      id: "c3", tenantId: "t3", unitId: "u4", start: "2025-11-01", rent: 22000, installments: 2,
+      id: "c3", tenantId: "t3", unitId: "u4", start: "2025-11-01", rent: 22000, installments: 2, active: true,
       payments: [],
     },
     {
-      id: "c4", tenantId: "t4", unitId: "u5", start: "2025-08-01", rent: 21000, installments: 12,
+      id: "c4", tenantId: "t4", unitId: "u5", start: "2025-08-01", rent: 21000, installments: 12, active: true,
       payments: [
         { id: "pay6", amount: 21000, method: "شيك", date: "2025-08-01" },
       ],

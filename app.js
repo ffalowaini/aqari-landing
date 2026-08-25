@@ -90,9 +90,12 @@ function readHijriPicker(form, prefix) {
   return hijriToGregorianISO(hy, hm, hd);
 }
 function contractForUnit(unitId) {
+  return DataStore.getContracts().find((c) => c.unitId === unitId && c.active);
+}
+function contractHistoryForUnit(unitId) {
   return DataStore.getContracts()
-    .filter((c) => c.unitId === unitId)
-    .sort((a, b) => b.start.localeCompare(a.start))[0];
+    .filter((c) => c.unitId === unitId && !c.active)
+    .sort((a, b) => b.start.localeCompare(a.start));
 }
 const PAYMENT_METHODS = ["نقدي", "تحويل بنكي", "شيك", "بطاقة"];
 
@@ -438,6 +441,92 @@ function openRecordPaymentModal(contractId, onSaved) {
   });
 }
 
+function openEndLeaseModal(unitId, onSaved) {
+  const contracts = DataStore.getContracts();
+  const unitContracts = contracts.filter((c) => c.unitId === unitId);
+  const contract = unitContracts.find((c) => c.active);
+  if (!contract) return;
+
+  openConfirmModal(
+    `سيتم إنهاء عقد "${tenantName(contract.tenantId)}" الحالي وتحويل الوحدة إلى شاغرة. ستبقى بيانات المستأجر وسجل مدفوعاته محفوظة ضمن سجل العقود السابقة لهذه الوحدة، ويمكنك بعدها تأجيرها لمستأجر جديد.`,
+    () => {
+      contract.active = false;
+      contract.endedAt = new Date().toISOString().slice(0, 10);
+      DataStore.saveContracts(contracts);
+
+      const units = DataStore.getUnits();
+      const unit = units.find((u) => u.id === unitId);
+      if (unit) unit.status = "vacant";
+      DataStore.saveUnits(units);
+
+      (onSaved || renderUnits)();
+    }
+  );
+}
+
+function openRenewContractModal(unitId, onSaved) {
+  const contracts = DataStore.getContracts();
+  const unitContracts = contracts.filter((c) => c.unitId === unitId);
+  const oldContract = unitContracts.find((c) => c.active);
+  if (!oldContract) return;
+
+  openModal(`
+    <h3>تجديد العقد لنفس المستأجر</h3>
+    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">المستأجر: ${tenantName(oldContract.tenantId)}</p>
+    <form class="modal-form" id="renewForm">
+      <label>تاريخ بدء العقد الجديد (هجري)
+        ${hijriPickerHTML("start", todayHijri())}
+      </label>
+      <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${oldContract.rent}" required></label>
+      <label>عدد الأقساط <input type="number" name="installments" min="1" value="${oldContract.installments}" required></label>
+      <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
+      <label>طريقة الدفع (عند وجود مبلغ مقدم)
+        <select name="method">
+          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+        </select>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">تجديد العقد</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("renewForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const rent = Number(f.rent.value);
+    const paidAmount = Math.min(Number(f.paidAmount.value), rent);
+    const startISO = readHijriPicker(f, "start");
+
+    oldContract.active = false;
+    oldContract.endedAt = startISO;
+
+    const newContract = {
+      id: DataStore.uid("c"),
+      tenantId: oldContract.tenantId,
+      unitId,
+      start: startISO,
+      rent,
+      installments: Number(f.installments.value),
+      active: true,
+      payments: [],
+    };
+    if (paidAmount > 0) {
+      newContract.payments.push({ id: DataStore.uid("pay"), amount: paidAmount, method: f.method.value, date: startISO });
+    }
+    contracts.push(newContract);
+    DataStore.saveContracts(contracts);
+
+    const units = DataStore.getUnits();
+    const unit = units.find((u) => u.id === unitId);
+    if (unit) unit.rent = rent;
+    DataStore.saveUnits(units);
+
+    closeModal();
+    (onSaved || renderUnits)();
+  });
+}
+
 /* ---------- تفاصيل العقار ---------- */
 function renderPropertyDetails(propertyId) {
   const property = DataStore.getProperties().find((p) => p.id === propertyId);
@@ -447,10 +536,9 @@ function renderPropertyDetails(propertyId) {
   }
 
   const units = DataStore.getUnits().filter((u) => u.propertyId === propertyId);
-  const contracts = DataStore.getContracts();
   const unitRows = units.map((u) => ({
     unit: u,
-    contract: contracts.filter((c) => c.unitId === u.id).sort((a, b) => b.start.localeCompare(a.start))[0],
+    contract: contractForUnit(u.id),
   }));
 
   const occupiedCount = units.filter((u) => u.status === "occupied").length;
@@ -552,12 +640,11 @@ function renderUnitDetails(unitId) {
     return;
   }
 
-  const contract = DataStore.getContracts()
-    .filter((c) => c.unitId === unitId)
-    .sort((a, b) => b.start.localeCompare(a.start))[0];
+  const contract = contractForUnit(unitId);
   const paid = contract ? contractPaidAmount(contract) : 0;
   const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
   const payments = contract ? [...(contract.payments || [])].sort((a, b) => b.date.localeCompare(a.date)) : [];
+  const pastContracts = contractHistoryForUnit(unitId);
 
   els.content.innerHTML = `
     <a href="#property/${unit.propertyId}" class="link-btn" style="display:inline-block;margin-bottom:16px;">→ العودة لتفاصيل العقار</a>
@@ -574,7 +661,13 @@ function renderUnitDetails(unitId) {
     <div class="panel">
       <div class="panel-head">
         <h2>${propertyName(unit.propertyId)} — وحدة ${unit.number}</h2>
-        ${contract ? `<button class="btn btn-primary" id="recordPaymentBtn">تسجيل دفعة</button>` : `<button class="btn btn-primary" id="rentOutBtn">تأجير الوحدة</button>`}
+        <div class="table-actions">
+          ${contract ? `
+            <button class="btn btn-outline" id="renewBtn">تجديد العقد</button>
+            <button class="btn btn-outline" id="endLeaseBtn" style="color:#dc2626;border-color:#dc2626;">إنهاء العقد</button>
+            <button class="btn btn-primary" id="recordPaymentBtn">تسجيل دفعة</button>
+          ` : `<button class="btn btn-primary" id="rentOutBtn">تأجير الوحدة</button>`}
+        </div>
       </div>
       <div style="padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;color:var(--text-dim);font-size:.88rem;">
         <div>الشارع<br><strong style="color:var(--text);">${unit.street || "—"}</strong></div>
@@ -603,18 +696,44 @@ function renderUnitDetails(unitId) {
         </div>
       ` : `<div class="empty-state">لا توجد مدفوعات مسجلة لهذه الوحدة بعد.</div>`}
     </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>سجل العقود السابقة (${pastContracts.length})</h2></div>
+      ${pastContracts.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>المستأجر</th><th>من (هجري)</th><th>إلى (هجري)</th><th>قيمة الإيجار</th><th>إجمالي المدفوع</th></tr></thead>
+            <tbody>
+              ${pastContracts.map((c) => `
+                <tr>
+                  <td>${tenantName(c.tenantId)}</td>
+                  <td>${toHijri(c.start)}</td>
+                  <td>${c.endedAt ? toHijri(c.endedAt) : "—"}</td>
+                  <td>${money(c.rent)}</td>
+                  <td>${money(contractPaidAmount(c))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">لا توجد عقود سابقة لهذه الوحدة.</div>`}
+    </div>
   `;
 
   const recordBtn = document.getElementById("recordPaymentBtn");
   if (recordBtn) recordBtn.addEventListener("click", () => openRecordPaymentModal(contract.id, () => renderUnitDetails(unitId)));
   const rentOutBtn = document.getElementById("rentOutBtn");
   if (rentOutBtn) rentOutBtn.addEventListener("click", () => openRentOutModal(unit.id, () => renderUnitDetails(unitId)));
+  const renewBtn = document.getElementById("renewBtn");
+  if (renewBtn) renewBtn.addEventListener("click", () => openRenewContractModal(unitId, () => renderUnitDetails(unitId)));
+  const endLeaseBtn = document.getElementById("endLeaseBtn");
+  if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, () => renderUnitDetails(unitId)));
 }
 
 /* ---------- لوحة المعلومات (dashboard overview) ---------- */
 function renderOverview() {
   const units = DataStore.getUnits();
-  const contracts = DataStore.getContracts();
+  const contracts = DataStore.getContracts().filter((c) => c.active);
 
   const occupiedUnits = units.filter((u) => u.status === "occupied");
   const occupancyRate = units.length ? Math.round((occupiedUnits.length / units.length) * 100) : 0;
@@ -891,7 +1010,7 @@ function openEditUnitModal(unitId) {
   if (!unit) return;
 
   const contracts = DataStore.getContracts();
-  const contract = contracts.filter((c) => c.unitId === unitId).sort((a, b) => b.start.localeCompare(a.start))[0];
+  const contract = contracts.find((c) => c.unitId === unitId && c.active);
   const tenants = DataStore.getTenants();
   const tenant = contract ? tenants.find((t) => t.id === contract.tenantId) : null;
 
