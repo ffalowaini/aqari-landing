@@ -438,11 +438,84 @@ function deleteUnit(unitId) {
   DataStore.saveContracts(DataStore.getContracts().filter((c) => c.unitId !== unitId));
 }
 
+function showMessage(title, text) {
+  openModal(`
+    <h3>${title}</h3>
+    <p style="color:var(--text-dim);font-size:.9rem;line-height:1.7;">${text}</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary" id="cancelModal">حسنًا</button>
+    </div>
+  `);
+}
+
+function exportData() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    version: 2,
+    properties: DataStore.getProperties(),
+    units: DataStore.getUnits(),
+    tenants: DataStore.getTenants(),
+    contracts: DataStore.getContracts(),
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `aqari-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleImportFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let payload;
+    try {
+      payload = JSON.parse(reader.result);
+    } catch (e) {
+      showMessage("خطأ", "الملف غير صالح. تأكد من اختيار ملف تصدير تم إنشاؤه من هذا الموقع.");
+      return;
+    }
+    const isValid = ["properties", "units", "tenants", "contracts"].every((k) => Array.isArray(payload[k]));
+    if (!isValid) {
+      showMessage("خطأ", "صيغة الملف غير متوافقة مع هذا الموقع.");
+      return;
+    }
+    openConfirmModal(
+      "سيتم استبدال جميع البيانات الحالية (العقارات، الوحدات، المستأجرين، والعقود) بالبيانات الموجودة في الملف المستورد. لا يمكن التراجع عن هذا الإجراء.",
+      () => {
+        DataStore.saveProperties(payload.properties);
+        DataStore.saveUnits(payload.units);
+        DataStore.saveTenants(payload.tenants);
+        DataStore.saveContracts(payload.contracts);
+        renderAdmin();
+      }
+    );
+  };
+  reader.readAsText(file);
+}
+
 function renderAdmin() {
   const properties = DataStore.getProperties();
   const units = DataStore.getUnits();
 
   els.content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h2>نسخ احتياطي للبيانات</h2>
+        <div class="table-actions">
+          <button class="btn btn-outline" id="exportDataBtn">تصدير البيانات</button>
+          <button class="btn btn-outline" id="importDataBtn">استيراد البيانات</button>
+          <input type="file" id="importFileInput" accept="application/json,.json" style="display:none">
+        </div>
+      </div>
+      <div style="padding:18px 22px;color:var(--text-dim);font-size:.85rem;line-height:1.7;">
+        البيانات محفوظة في متصفحك فقط. استخدم "تصدير" لحفظ نسخة كملف على جهازك، و"استيراد" لاستعادتها لاحقًا أو نقلها إلى متصفح أو جهاز آخر.
+      </div>
+    </div>
+
     <div class="panel">
       <div class="panel-head"><h2>العقارات (${properties.length})</h2></div>
       ${properties.length ? `
@@ -491,6 +564,16 @@ function renderAdmin() {
       ` : `<div class="empty-state">لا توجد وحدات بعد.</div>`}
     </div>
   `;
+
+  document.getElementById("exportDataBtn").addEventListener("click", exportData);
+  document.getElementById("importDataBtn").addEventListener("click", () => {
+    document.getElementById("importFileInput").click();
+  });
+  document.getElementById("importFileInput").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) handleImportFile(file);
+    e.target.value = "";
+  });
 
   els.content.querySelectorAll("[data-edit-property]").forEach((btn) => {
     btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty));
