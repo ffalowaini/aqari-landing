@@ -94,18 +94,39 @@ function contractForUnit(unitId) {
     .filter((c) => c.unitId === unitId)
     .sort((a, b) => b.start.localeCompare(a.start))[0];
 }
+const PAYMENT_METHODS = ["نقدي", "تحويل بنكي", "شيك", "بطاقة"];
+
+function contractPaidAmount(contract) {
+  return (contract.payments || []).reduce((s, p) => s + p.amount, 0);
+}
+/* How much of the rent SHOULD be paid by today, given the installment schedule.
+   Installments are assumed evenly spaced across the 12 months from the lease start. */
+function expectedPaidByNow(contract) {
+  const start = new Date(contract.start + "T00:00:00");
+  const now = new Date();
+  if (now < start) return 0;
+  let monthsElapsed = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
+  if (now.getDate() < start.getDate()) monthsElapsed -= 1;
+  monthsElapsed = Math.max(0, monthsElapsed);
+  const monthsPerInstallment = 12 / contract.installments;
+  const installmentsDue = Math.min(contract.installments, Math.floor(monthsElapsed / monthsPerInstallment) + 1);
+  return Math.min(contract.rent, installmentsDue * (contract.rent / contract.installments));
+}
 function paymentStatusOf(contract) {
   if (!contract) return "vacant";
-  if (contract.paidAmount <= 0) return "not_started";
-  if (contract.paidAmount >= contract.rent) return "paid_full";
-  return "partial";
+  const paid = contractPaidAmount(contract);
+  if (paid >= contract.rent) return "paid_full";
+  if (paid < expectedPaidByNow(contract)) return "late";
+  if (paid <= 0) return "not_started";
+  return "on_track";
 }
 function statusBadge(status) {
   const map = {
     vacant: ["شاغرة", "badge-gray"],
     occupied: ["مؤجرة", "badge-green"],
-    not_started: ["لم يبدأ السداد", "badge-red"],
-    partial: ["سداد جزئي", "badge-orange"],
+    not_started: ["لم يبدأ السداد", "badge-gray"],
+    late: ["متأخر", "badge-red"],
+    on_track: ["قيد السداد", "badge-blue"],
     paid_full: ["مكتمل السداد", "badge-green"],
   };
   const [label, cls] = map[status] || [status, "badge-gray"];
@@ -145,10 +166,21 @@ const routes = {
 
 function router() {
   const hash = (window.location.hash || "#units").slice(1);
-  const route = routes[hash] || routes.units;
+  const [routeKey, param] = hash.split("/");
+
+  if (routeKey === "property" && param) {
+    els.title.textContent = "تفاصيل العقار";
+    document.querySelectorAll(".sidebar-nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === "units"));
+    els.content.innerHTML = "";
+    renderPropertyDetails(param);
+    els.sidebar.classList.remove("open");
+    return;
+  }
+
+  const route = routes[routeKey] || routes.units;
   els.title.textContent = route.title;
   document.querySelectorAll(".sidebar-nav a").forEach((a) => {
-    a.classList.toggle("active", a.dataset.route === hash);
+    a.classList.toggle("active", a.dataset.route === routeKey);
   });
   els.content.innerHTML = "";
   route.render();
@@ -164,11 +196,11 @@ function renderUnits() {
   const rows = units.map((u) => {
     const contract = contractForUnit(u.id);
     const status = paymentStatusOf(contract);
-    const paid = contract ? contract.paidAmount : 0;
-    const remaining = contract ? Math.max(0, contract.rent - contract.paidAmount) : 0;
+    const paid = contract ? contractPaidAmount(contract) : 0;
+    const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
     return `
       <tr>
-        <td>${propertyName(u.propertyId)}</td>
+        <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${propertyName(u.propertyId)}</button></td>
         <td>${u.number}</td>
         <td>${u.street || "—"}</td>
         <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
@@ -180,7 +212,7 @@ function renderUnits() {
         <td>${statusBadge(status)}</td>
         <td class="table-actions">
           ${contract
-            ? `<button class="link-btn" data-update-paid="${contract.id}">تحديث المبلغ المدفوع</button>`
+            ? `<button class="link-btn" data-record-payment="${contract.id}">تسجيل دفعة</button>`
             : `<button class="link-btn" data-rent-out="${u.id}">تأجير الوحدة</button>`}
         </td>
       </tr>
@@ -216,8 +248,11 @@ function renderUnits() {
   document.getElementById("addPropertyBtn").addEventListener("click", openAddPropertyModal);
   document.getElementById("addUnitBtn").addEventListener("click", openAddUnitModal);
 
-  els.content.querySelectorAll("[data-update-paid]").forEach((btn) => {
-    btn.addEventListener("click", () => openUpdatePaidModal(btn.dataset.updatePaid));
+  els.content.querySelectorAll("[data-view-property]").forEach((btn) => {
+    btn.addEventListener("click", () => { window.location.hash = `#property/${btn.dataset.viewProperty}`; });
+  });
+  els.content.querySelectorAll("[data-record-payment]").forEach((btn) => {
+    btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment));
   });
   els.content.querySelectorAll("[data-rent-out]").forEach((btn) => {
     btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut));
@@ -291,7 +326,7 @@ function openAddUnitModal() {
   });
 }
 
-function openRentOutModal(unitId) {
+function openRentOutModal(unitId, onSaved) {
   openModal(`
     <h3>تأجير الوحدة</h3>
     <form class="modal-form" id="rentOutForm">
@@ -303,6 +338,11 @@ function openRentOutModal(unitId) {
       <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" required></label>
       <label>عدد الأقساط <input type="number" name="installments" min="1" value="1" required></label>
       <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
+      <label>طريقة الدفع (عند وجود مبلغ مقدم)
+        <select name="method">
+          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+        </select>
+      </label>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
         <button type="submit" class="btn btn-primary">حفظ</button>
@@ -314,6 +354,7 @@ function openRentOutModal(unitId) {
     const f = e.target;
     const rent = Number(f.rent.value);
     const paidAmount = Math.min(Number(f.paidAmount.value), rent);
+    const startISO = readHijriPicker(f, "start");
 
     const tenants = DataStore.getTenants();
     const tenant = { id: DataStore.uid("t"), name: f.tenantName.value.trim(), phone: f.phone.value.trim(), unitId };
@@ -321,15 +362,19 @@ function openRentOutModal(unitId) {
     DataStore.saveTenants(tenants);
 
     const contracts = DataStore.getContracts();
-    contracts.push({
+    const contract = {
       id: DataStore.uid("c"),
       tenantId: tenant.id,
       unitId,
-      start: readHijriPicker(f, "start"),
+      start: startISO,
       rent,
       installments: Number(f.installments.value),
-      paidAmount,
-    });
+      payments: [],
+    };
+    if (paidAmount > 0) {
+      contract.payments.push({ id: DataStore.uid("pay"), amount: paidAmount, method: f.method.value, date: startISO });
+    }
+    contracts.push(contract);
     DataStore.saveContracts(contracts);
 
     const units = DataStore.getUnits();
@@ -338,33 +383,150 @@ function openRentOutModal(unitId) {
     DataStore.saveUnits(units);
 
     closeModal();
-    renderUnits();
+    (onSaved || renderUnits)();
   });
 }
 
-function openUpdatePaidModal(contractId) {
-  const contract = DataStore.getContracts().find((c) => c.id === contractId);
+function openRecordPaymentModal(contractId, onSaved) {
+  const contracts = DataStore.getContracts();
+  const contract = contracts.find((c) => c.id === contractId);
   if (!contract) return;
+  const paid = contractPaidAmount(contract);
+  const remaining = Math.max(0, contract.rent - paid);
+
   openModal(`
-    <h3>تحديث المبلغ المدفوع</h3>
-    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">قيمة الإيجار: ${money(contract.rent)}</p>
-    <form class="modal-form" id="paidForm">
-      <label>المبلغ المدفوع <input type="number" name="paidAmount" min="0" value="${contract.paidAmount}" required></label>
+    <h3>تسجيل دفعة جديدة</h3>
+    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">قيمة الإيجار: ${money(contract.rent)} — المدفوع حتى الآن: ${money(paid)} — المتبقي: ${money(remaining)}</p>
+    <form class="modal-form" id="paymentForm">
+      <label>المبلغ <input type="number" name="amount" min="1" value="${remaining > 0 ? remaining : ""}" required></label>
+      <label>طريقة الدفع
+        <select name="method" required>
+          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+        </select>
+      </label>
+      <label>تاريخ الدفع <input type="date" name="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
         <button type="submit" class="btn btn-primary">حفظ</button>
       </div>
     </form>
   `);
-  document.getElementById("paidForm").addEventListener("submit", (e) => {
+  document.getElementById("paymentForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    const value = Math.max(0, Number(e.target.paidAmount.value));
-    const contracts = DataStore.getContracts();
-    const c = contracts.find((x) => x.id === contractId);
-    if (c) c.paidAmount = value;
+    const f = e.target;
+    if (!Array.isArray(contract.payments)) contract.payments = [];
+    contract.payments.push({
+      id: DataStore.uid("pay"),
+      amount: Number(f.amount.value),
+      method: f.method.value,
+      date: f.date.value,
+    });
     DataStore.saveContracts(contracts);
     closeModal();
-    renderUnits();
+    (onSaved || renderUnits)();
+  });
+}
+
+/* ---------- تفاصيل العقار ---------- */
+function renderPropertyDetails(propertyId) {
+  const property = DataStore.getProperties().find((p) => p.id === propertyId);
+  if (!property) {
+    els.content.innerHTML = `<div class="empty-state">هذا العقار غير موجود أو تم حذفه.<br><a href="#units" class="link-btn" style="margin-top:10px;display:inline-block;">العودة للوحدات</a></div>`;
+    return;
+  }
+
+  const units = DataStore.getUnits().filter((u) => u.propertyId === propertyId);
+  const contracts = DataStore.getContracts();
+  const unitRows = units.map((u) => ({
+    unit: u,
+    contract: contracts.filter((c) => c.unitId === u.id).sort((a, b) => b.start.localeCompare(a.start))[0],
+  }));
+
+  const occupiedCount = units.filter((u) => u.status === "occupied").length;
+  const totalRent = unitRows.reduce((s, { contract }) => s + (contract ? contract.rent : 0), 0);
+  const totalPaid = unitRows.reduce((s, { contract }) => s + (contract ? contractPaidAmount(contract) : 0), 0);
+  const totalRemaining = Math.max(0, totalRent - totalPaid);
+
+  const allPayments = [];
+  unitRows.forEach(({ unit, contract }) => {
+    if (!contract) return;
+    (contract.payments || []).forEach((p) => allPayments.push({ ...p, unit, contract }));
+  });
+  allPayments.sort((a, b) => b.date.localeCompare(a.date));
+
+  els.content.innerHTML = `
+    <a href="#units" class="link-btn" style="display:inline-block;margin-bottom:16px;">→ العودة للوحدات</a>
+
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">عدد الوحدات</div><div class="stat-value">${units.length}</div></div>
+      <div class="stat-card"><div class="stat-label">الوحدات المؤجرة</div><div class="stat-value">${occupiedCount}</div></div>
+      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(totalPaid)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(totalRemaining)}</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>${property.name}</h2>
+        <span style="color:var(--text-dim);font-size:.85rem;">${property.city}</span>
+      </div>
+      ${units.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>الوحدة</th><th>الشارع</th><th>المستأجر</th><th>قيمة الإيجار</th><th>المبلغ المتبقي</th><th>حالة الدفع</th><th></th></tr></thead>
+            <tbody>
+              ${unitRows.map(({ unit, contract }) => {
+                const paid = contract ? contractPaidAmount(contract) : 0;
+                const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
+                return `
+                  <tr>
+                    <td>${unit.number}</td>
+                    <td>${unit.street || "—"}</td>
+                    <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
+                    <td>${contract ? money(contract.rent) : "—"}</td>
+                    <td>${contract ? money(remaining) : "—"}</td>
+                    <td>${statusBadge(paymentStatusOf(contract))}</td>
+                    <td class="table-actions">
+                      ${contract
+                        ? `<button class="link-btn" data-record-payment="${contract.id}">تسجيل دفعة</button>`
+                        : `<button class="link-btn" data-rent-out="${unit.id}">تأجير الوحدة</button>`}
+                    </td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">لا توجد وحدات في هذا العقار بعد.</div>`}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>قائمة المدفوعات (${allPayments.length})</h2></div>
+      ${allPayments.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>التاريخ (هجري)</th><th>الوحدة</th><th>المستأجر</th><th>المبلغ</th><th>طريقة الدفع</th></tr></thead>
+            <tbody>
+              ${allPayments.map((p) => `
+                <tr>
+                  <td>${toHijri(p.date)}</td>
+                  <td>${p.unit.number}</td>
+                  <td>${tenantName(p.contract.tenantId)}</td>
+                  <td>${money(p.amount)}</td>
+                  <td>${p.method}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">لا توجد مدفوعات مسجلة بعد.</div>`}
+    </div>
+  `;
+
+  els.content.querySelectorAll("[data-record-payment]").forEach((btn) => {
+    btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment, () => renderPropertyDetails(propertyId)));
+  });
+  els.content.querySelectorAll("[data-rent-out]").forEach((btn) => {
+    btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut, () => renderPropertyDetails(propertyId)));
   });
 }
 
@@ -377,12 +539,12 @@ function renderOverview() {
   const occupancyRate = units.length ? Math.round((occupiedUnits.length / units.length) * 100) : 0;
 
   const totalRent = contracts.reduce((s, c) => s + c.rent, 0);
-  const totalPaid = contracts.reduce((s, c) => s + c.paidAmount, 0);
-  const totalRemaining = contracts.reduce((s, c) => s + Math.max(0, c.rent - c.paidAmount), 0);
+  const totalPaid = contracts.reduce((s, c) => s + contractPaidAmount(c), 0);
+  const totalRemaining = contracts.reduce((s, c) => s + Math.max(0, c.rent - contractPaidAmount(c)), 0);
   const collectionRate = totalRent ? Math.round((totalPaid / totalRent) * 100) : 0;
 
   const topRemaining = contracts
-    .map((c) => ({ c, remaining: Math.max(0, c.rent - c.paidAmount) }))
+    .map((c) => ({ c, remaining: Math.max(0, c.rent - contractPaidAmount(c)) }))
     .filter((x) => x.remaining > 0)
     .sort((a, b) => b.remaining - a.remaining)
     .slice(0, 5);
@@ -530,6 +692,7 @@ function renderAdmin() {
                   <td>${p.city}</td>
                   <td>${count}</td>
                   <td class="table-actions">
+                    <button class="link-btn" data-view-property="${p.id}">التفاصيل</button>
                     <button class="link-btn" data-edit-property="${p.id}">تعديل</button>
                     <button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button>
                   </td>
@@ -575,6 +738,9 @@ function renderAdmin() {
     e.target.value = "";
   });
 
+  els.content.querySelectorAll("[data-view-property]").forEach((btn) => {
+    btn.addEventListener("click", () => { window.location.hash = `#property/${btn.dataset.viewProperty}`; });
+  });
   els.content.querySelectorAll("[data-edit-property]").forEach((btn) => {
     btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty));
   });
@@ -665,7 +831,7 @@ function openEditUnitModal(unitId) {
         </label>
         <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${contract.rent}" required></label>
         <label>عدد الأقساط <input type="number" name="installments" min="1" value="${contract.installments}" required></label>
-        <label>المبلغ المدفوع <input type="number" name="paidAmount" min="0" value="${contract.paidAmount}" required></label>
+        <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(contractPaidAmount(contract))}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
       ` : ""}
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
@@ -691,7 +857,6 @@ function openEditUnitModal(unitId) {
       contract.start = readHijriPicker(f, "start");
       contract.rent = rent;
       contract.installments = Number(f.installments.value);
-      contract.paidAmount = Math.min(Number(f.paidAmount.value), rent);
       DataStore.saveContracts(contracts);
       unit.rent = rent;
       DataStore.saveUnits(units);
