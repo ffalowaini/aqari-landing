@@ -104,16 +104,40 @@ function contractPaidAmount(contract) {
 }
 /* How much of the rent SHOULD be paid by today, given the installment schedule.
    Installments are assumed evenly spaced across the 12 months from the lease start. */
-function expectedPaidByNow(contract) {
+/* Explicit due-date schedule: installment 1 is due the day the lease starts;
+   each following installment is due every (12 / installments) months after that. */
+function installmentSchedule(contract) {
   const start = new Date(contract.start + "T00:00:00");
-  const now = new Date();
-  if (now < start) return 0;
-  let monthsElapsed = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-  if (now.getDate() < start.getDate()) monthsElapsed -= 1;
-  monthsElapsed = Math.max(0, monthsElapsed);
-  const monthsPerInstallment = 12 / contract.installments;
-  const installmentsDue = Math.min(contract.installments, Math.floor(monthsElapsed / monthsPerInstallment) + 1);
-  return Math.min(contract.rent, installmentsDue * (contract.rent / contract.installments));
+  const count = contract.installments;
+  const amountEach = contract.rent / count;
+  const monthsPerInstallment = 12 / count;
+  const schedule = [];
+  for (let i = 0; i < count; i++) {
+    const due = new Date(start);
+    due.setMonth(due.getMonth() + Math.round(i * monthsPerInstallment));
+    schedule.push({ index: i + 1, dueDate: due.toISOString().slice(0, 10), amount: amountEach });
+  }
+  return schedule;
+}
+/* Per-installment status against the actual cumulative amount paid so far. */
+function installmentStatusList(contract) {
+  const totalPaid = contractPaidAmount(contract);
+  const today = new Date().toISOString().slice(0, 10);
+  let cumulative = 0;
+  return installmentSchedule(contract).map((inst) => {
+    cumulative += inst.amount;
+    let status;
+    if (totalPaid >= cumulative - 0.01) status = "paid";
+    else if (inst.dueDate <= today) status = "overdue";
+    else status = "upcoming";
+    return { ...inst, status };
+  });
+}
+function expectedPaidByNow(contract) {
+  const today = new Date().toISOString().slice(0, 10);
+  return installmentSchedule(contract)
+    .filter((inst) => inst.dueDate <= today)
+    .reduce((s, inst) => s + inst.amount, 0);
 }
 function paymentStatusOf(contract) {
   if (!contract) return "vacant";
@@ -131,6 +155,9 @@ function statusBadge(status) {
     late: ["متأخر", "badge-red"],
     on_track: ["قيد السداد", "badge-blue"],
     paid_full: ["مكتمل السداد", "badge-green"],
+    paid: ["مدفوع", "badge-green"],
+    overdue: ["متأخر", "badge-red"],
+    upcoming: ["قادم", "badge-gray"],
   };
   const [label, cls] = map[status] || [status, "badge-gray"];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -644,6 +671,7 @@ function renderUnitDetails(unitId) {
   const paid = contract ? contractPaidAmount(contract) : 0;
   const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
   const payments = contract ? [...(contract.payments || [])].sort((a, b) => b.date.localeCompare(a.date)) : [];
+  const schedule = contract ? installmentStatusList(contract) : [];
   const pastContracts = contractHistoryForUnit(unitId);
 
   els.content.innerHTML = `
@@ -676,6 +704,27 @@ function renderUnitDetails(unitId) {
         <div>عدد الأقساط<br><strong style="color:var(--text);">${contract ? contract.installments : "—"}</strong></div>
       </div>
     </div>
+
+    ${contract ? `
+      <div class="panel">
+        <div class="panel-head"><h2>جدول استحقاق الأقساط</h2></div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>القسط</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th><th>الحالة</th></tr></thead>
+            <tbody>
+              ${schedule.map((inst) => `
+                <tr>
+                  <td>${inst.index} من ${contract.installments}</td>
+                  <td>${toHijri(inst.dueDate)}</td>
+                  <td>${money(inst.amount)}</td>
+                  <td>${statusBadge(inst.status)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ""}
 
     <div class="panel">
       <div class="panel-head"><h2>سجل المدفوعات لهذه الوحدة (${payments.length})</h2></div>
