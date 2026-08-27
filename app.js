@@ -23,14 +23,6 @@ els.modalOverlay.addEventListener("click", (e) => {
 function money(n) {
   return Number(n).toLocaleString("ar-SA") + " ر.س";
 }
-function propertyName(id) {
-  const p = DataStore.getProperties().find((x) => x.id === id);
-  return p ? p.name : "—";
-}
-function tenantName(id) {
-  const t = DataStore.getTenants().find((x) => x.id === id);
-  return t ? t.name : "—";
-}
 function toHijri(isoDate) {
   if (!isoDate) return "—";
   const d = new Date(isoDate + "T00:00:00");
@@ -39,8 +31,30 @@ function toHijri(isoDate) {
     year: "numeric", month: "long", day: "numeric",
   }).format(d) + " هـ";
 }
+function statusBadge(status) {
+  const map = {
+    vacant: ["شاغرة", "badge-gray"],
+    occupied: ["مؤجرة", "badge-green"],
+    not_started: ["لم يبدأ السداد", "badge-gray"],
+    late: ["متأخر", "badge-red"],
+    on_track: ["قيد السداد", "badge-blue"],
+    paid_full: ["مكتمل السداد", "badge-green"],
+    paid: ["مدفوع", "badge-green"],
+    overdue: ["متأخر", "badge-red"],
+    upcoming: ["قادم", "badge-gray"],
+  };
+  const [label, cls] = map[status] || [status, "badge-gray"];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+async function safely(fn) {
+  try {
+    await fn();
+  } catch (err) {
+    showMessage("خطأ", err.message || "حدث خطأ غير متوقع.");
+  }
+}
 
-/* ---------- Hijri date picker (Umm al-Qura, same calendar used for display) ---------- */
+/* ---------- Hijri date picker (Umm al-Qura) — UI-only, still done client-side ---------- */
 const HIJRI_MONTHS = ["محرم", "صفر", "ربيع الأول", "ربيع الآخر", "جمادى الأولى", "جمادى الآخرة", "رجب", "شعبان", "رمضان", "شوال", "ذو القعدة", "ذو الحجة"];
 
 function getHijriParts(date) {
@@ -89,79 +103,8 @@ function readHijriPicker(form, prefix) {
   const hd = Number(form[prefix + "Day"].value);
   return hijriToGregorianISO(hy, hm, hd);
 }
-function contractForUnit(unitId) {
-  return DataStore.getContracts().find((c) => c.unitId === unitId && c.active);
-}
-function contractHistoryForUnit(unitId) {
-  return DataStore.getContracts()
-    .filter((c) => c.unitId === unitId && !c.active)
-    .sort((a, b) => b.start.localeCompare(a.start));
-}
-const PAYMENT_METHODS = ["نقدي", "تحويل بنكي", "شيك", "بطاقة"];
 
-function contractPaidAmount(contract) {
-  return (contract.payments || []).reduce((s, p) => s + p.amount, 0);
-}
-/* How much of the rent SHOULD be paid by today, given the installment schedule.
-   Installments are assumed evenly spaced across the 12 months from the lease start. */
-/* Explicit due-date schedule: installment 1 is due the day the lease starts;
-   each following installment is due every (12 / installments) months after that. */
-function installmentSchedule(contract) {
-  const start = new Date(contract.start + "T00:00:00");
-  const count = contract.installments;
-  const amountEach = contract.rent / count;
-  const monthsPerInstallment = 12 / count;
-  const schedule = [];
-  for (let i = 0; i < count; i++) {
-    const due = new Date(start);
-    due.setMonth(due.getMonth() + Math.round(i * monthsPerInstallment));
-    schedule.push({ index: i + 1, dueDate: due.toISOString().slice(0, 10), amount: amountEach });
-  }
-  return schedule;
-}
-/* Per-installment status against the actual cumulative amount paid so far. */
-function installmentStatusList(contract) {
-  const totalPaid = contractPaidAmount(contract);
-  const today = new Date().toISOString().slice(0, 10);
-  let cumulative = 0;
-  return installmentSchedule(contract).map((inst) => {
-    cumulative += inst.amount;
-    let status;
-    if (totalPaid >= cumulative - 0.01) status = "paid";
-    else if (inst.dueDate <= today) status = "overdue";
-    else status = "upcoming";
-    return { ...inst, status };
-  });
-}
-function expectedPaidByNow(contract) {
-  const today = new Date().toISOString().slice(0, 10);
-  return installmentSchedule(contract)
-    .filter((inst) => inst.dueDate <= today)
-    .reduce((s, inst) => s + inst.amount, 0);
-}
-function paymentStatusOf(contract) {
-  if (!contract) return "vacant";
-  const paid = contractPaidAmount(contract);
-  if (paid >= contract.rent) return "paid_full";
-  if (paid < expectedPaidByNow(contract)) return "late";
-  if (paid <= 0) return "not_started";
-  return "on_track";
-}
-function statusBadge(status) {
-  const map = {
-    vacant: ["شاغرة", "badge-gray"],
-    occupied: ["مؤجرة", "badge-green"],
-    not_started: ["لم يبدأ السداد", "badge-gray"],
-    late: ["متأخر", "badge-red"],
-    on_track: ["قيد السداد", "badge-blue"],
-    paid_full: ["مكتمل السداد", "badge-green"],
-    paid: ["مدفوع", "badge-green"],
-    overdue: ["متأخر", "badge-red"],
-    upcoming: ["قادم", "badge-gray"],
-  };
-  const [label, cls] = map[status] || [status, "badge-gray"];
-  return `<span class="badge ${cls}">${label}</span>`;
-}
+/* ---------- modal helpers ---------- */
 function openModal(html) {
   els.modalBody.innerHTML = html;
   els.modalOverlay.classList.add("open");
@@ -182,9 +125,20 @@ function openConfirmModal(message, onConfirm) {
     </div>
   `);
   document.getElementById("confirmDeleteBtn").addEventListener("click", () => {
-    onConfirm();
-    closeModal();
+    safely(async () => { await onConfirm(); closeModal(); });
   });
+}
+function showMessage(title, text) {
+  openModal(`
+    <h3>${title}</h3>
+    <p style="color:var(--text-dim);font-size:.9rem;line-height:1.7;">${text}</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-primary" id="cancelModal">حسنًا</button>
+    </div>
+  `);
+}
+function loadingHTML() {
+  return `<div class="empty-state">جارٍ التحميل...</div>`;
 }
 
 /* ---------- router ---------- */
@@ -194,24 +148,22 @@ const routes = {
   admin: { title: "الإدارة", render: renderAdmin },
 };
 
-function router() {
+async function router() {
   const hash = (window.location.hash || "#units").slice(1);
   const [routeKey, param] = hash.split("/");
+  els.content.innerHTML = loadingHTML();
+  els.sidebar.classList.remove("open");
 
   if (routeKey === "property" && param) {
     els.title.textContent = "تفاصيل العقار";
     document.querySelectorAll(".sidebar-nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === "units"));
-    els.content.innerHTML = "";
-    renderPropertyDetails(param);
-    els.sidebar.classList.remove("open");
+    await safely(() => renderPropertyDetails(param));
     return;
   }
   if (routeKey === "unit" && param) {
     els.title.textContent = "تفاصيل الوحدة";
     document.querySelectorAll(".sidebar-nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === "units"));
-    els.content.innerHTML = "";
-    renderUnitDetails(param);
-    els.sidebar.classList.remove("open");
+    await safely(() => renderUnitDetails(param));
     return;
   }
 
@@ -220,37 +172,32 @@ function router() {
   document.querySelectorAll(".sidebar-nav a").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === routeKey);
   });
-  els.content.innerHTML = "";
-  route.render();
-  els.sidebar.classList.remove("open");
+  await safely(route.render);
 }
 window.addEventListener("hashchange", router);
 
 /* ---------- الوحدات (merged unit view) ---------- */
-function renderUnits() {
-  const units = DataStore.getUnits();
-  const properties = DataStore.getProperties();
+async function renderUnits() {
+  const units = await Api.getUnits();
+  const properties = await Api.getProperties();
 
   const rows = units.map((u) => {
-    const contract = contractForUnit(u.id);
-    const status = paymentStatusOf(contract);
-    const paid = contract ? contractPaidAmount(contract) : 0;
-    const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
+    const c = u.activeContract;
     return `
       <tr>
-        <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${propertyName(u.propertyId)}</button></td>
+        <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${u.propertyName}</button></td>
         <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
         <td>${u.street || "—"}</td>
-        <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
-        <td>${contract ? toHijri(contract.start) : "—"}</td>
-        <td>${contract ? money(contract.rent) : "—"}</td>
-        <td>${contract ? contract.installments : "—"}</td>
-        <td>${contract ? money(paid) : "—"}</td>
-        <td>${contract ? money(remaining) : "—"}</td>
-        <td>${statusBadge(status)}</td>
+        <td>${c ? c.tenantName : "—"}</td>
+        <td>${c ? toHijri(c.start) : "—"}</td>
+        <td>${c ? money(c.rent) : "—"}</td>
+        <td>${c ? c.installments : "—"}</td>
+        <td>${c ? money(c.paidAmount) : "—"}</td>
+        <td>${c ? money(c.remaining) : "—"}</td>
+        <td>${statusBadge(c ? c.status : "vacant")}</td>
         <td class="table-actions">
-          ${contract
-            ? `<button class="link-btn" data-record-payment="${contract.id}">تسجيل دفعة</button>`
+          ${c
+            ? `<button class="link-btn" data-record-payment="${c.id}">تسجيل دفعة</button>`
             : `<button class="link-btn" data-rent-out="${u.id}">تأجير الوحدة</button>`}
         </td>
       </tr>
@@ -293,10 +240,10 @@ function renderUnits() {
     btn.addEventListener("click", () => { window.location.hash = `#unit/${btn.dataset.viewUnit}`; });
   });
   els.content.querySelectorAll("[data-record-payment]").forEach((btn) => {
-    btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment));
+    btn.addEventListener("click", () => openRecordPaymentModal(btn.dataset.recordPayment, renderUnits));
   });
   els.content.querySelectorAll("[data-rent-out]").forEach((btn) => {
-    btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut));
+    btn.addEventListener("click", () => openRentOutModal(btn.dataset.rentOut, renderUnits));
   });
 }
 
@@ -315,16 +262,16 @@ function openAddPropertyModal() {
   document.getElementById("propertyForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    const properties = DataStore.getProperties();
-    properties.push({ id: DataStore.uid("p"), name: f.name.value.trim(), city: f.city.value.trim(), unitsCount: 0 });
-    DataStore.saveProperties(properties);
-    closeModal();
-    renderUnits();
+    safely(async () => {
+      await Api.createProperty(f.name.value.trim(), f.city.value.trim());
+      closeModal();
+      renderUnits();
+    });
   });
 }
 
-function openAddUnitModal() {
-  const properties = DataStore.getProperties();
+async function openAddUnitModal() {
+  const properties = await Api.getProperties();
   if (!properties.length) {
     openModal(`
       <h3>لا يوجد عقارات بعد</h3>
@@ -352,18 +299,11 @@ function openAddUnitModal() {
   document.getElementById("unitForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    const units = DataStore.getUnits();
-    units.push({
-      id: DataStore.uid("u"),
-      propertyId: f.propertyId.value,
-      number: f.number.value.trim(),
-      street: f.street.value.trim(),
-      rent: 0,
-      status: "vacant",
+    safely(async () => {
+      await Api.createUnit(f.propertyId.value, f.number.value.trim(), f.street.value.trim());
+      closeModal();
+      renderUnits();
     });
-    DataStore.saveUnits(units);
-    closeModal();
-    renderUnits();
   });
 }
 
@@ -381,7 +321,10 @@ function openRentOutModal(unitId, onSaved) {
       <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
       <label>طريقة الدفع (عند وجود مبلغ مقدم)
         <select name="method">
-          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+          <option value="نقدي">نقدي</option>
+          <option value="تحويل بنكي">تحويل بنكي</option>
+          <option value="شيك">شيك</option>
+          <option value="بطاقة">بطاقة</option>
         </select>
       </label>
       <div class="modal-actions">
@@ -393,56 +336,33 @@ function openRentOutModal(unitId, onSaved) {
   document.getElementById("rentOutForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    const rent = Number(f.rent.value);
-    const paidAmount = Math.min(Number(f.paidAmount.value), rent);
-    const startISO = readHijriPicker(f, "start");
-
-    const tenants = DataStore.getTenants();
-    const tenant = { id: DataStore.uid("t"), name: f.tenantName.value.trim(), phone: f.phone.value.trim(), unitId };
-    tenants.push(tenant);
-    DataStore.saveTenants(tenants);
-
-    const contracts = DataStore.getContracts();
-    const contract = {
-      id: DataStore.uid("c"),
-      tenantId: tenant.id,
-      unitId,
-      start: startISO,
-      rent,
-      installments: Number(f.installments.value),
-      payments: [],
-    };
-    if (paidAmount > 0) {
-      contract.payments.push({ id: DataStore.uid("pay"), amount: paidAmount, method: f.method.value, date: startISO });
-    }
-    contracts.push(contract);
-    DataStore.saveContracts(contracts);
-
-    const units = DataStore.getUnits();
-    const unit = units.find((u) => u.id === unitId);
-    if (unit) { unit.status = "occupied"; unit.rent = rent; }
-    DataStore.saveUnits(units);
-
-    closeModal();
-    (onSaved || renderUnits)();
+    safely(async () => {
+      await Api.rentOut(unitId, {
+        tenantName: f.tenantName.value.trim(),
+        phone: f.phone.value.trim(),
+        start: readHijriPicker(f, "start"),
+        rent: Number(f.rent.value),
+        installments: Number(f.installments.value),
+        paidAmount: Number(f.paidAmount.value),
+        method: f.method.value,
+      });
+      closeModal();
+      (onSaved || renderUnits)();
+    });
   });
 }
 
 function openRecordPaymentModal(contractId, onSaved) {
-  const contracts = DataStore.getContracts();
-  const contract = contracts.find((c) => c.id === contractId);
-  if (!contract) return;
-  const paid = contractPaidAmount(contract);
-  const remaining = Math.max(0, contract.rent - paid);
-
   openModal(`
     <h3>تسجيل دفعة جديدة</h3>
-    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">قيمة الإيجار: ${money(contract.rent)} — المدفوع حتى الآن: ${money(paid)} — المتبقي: ${money(remaining)}</p>
     <form class="modal-form" id="paymentForm">
-      <label>المبلغ <input type="number" name="amount" min="1" value="${remaining > 0 ? remaining : ""}" required></label>
+      <label>المبلغ <input type="number" name="amount" min="1" required></label>
       <label>طريقة الدفع
         <select name="method" required>
-          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+          <option value="نقدي">نقدي</option>
+          <option value="تحويل بنكي">تحويل بنكي</option>
+          <option value="شيك">شيك</option>
+          <option value="بطاقة">بطاقة</option>
         </select>
       </label>
       <label>تاريخ الدفع <input type="date" name="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
@@ -455,51 +375,28 @@ function openRecordPaymentModal(contractId, onSaved) {
   document.getElementById("paymentForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    if (!Array.isArray(contract.payments)) contract.payments = [];
-    contract.payments.push({
-      id: DataStore.uid("pay"),
-      amount: Number(f.amount.value),
-      method: f.method.value,
-      date: f.date.value,
+    safely(async () => {
+      await Api.recordPayment(contractId, Number(f.amount.value), f.method.value, f.date.value);
+      closeModal();
+      (onSaved || renderUnits)();
     });
-    DataStore.saveContracts(contracts);
-    closeModal();
-    (onSaved || renderUnits)();
   });
 }
 
-function openEndLeaseModal(unitId, onSaved) {
-  const contracts = DataStore.getContracts();
-  const unitContracts = contracts.filter((c) => c.unitId === unitId);
-  const contract = unitContracts.find((c) => c.active);
-  if (!contract) return;
-
+function openEndLeaseModal(unitId, tenantName, onSaved) {
   openConfirmModal(
-    `سيتم إنهاء عقد "${tenantName(contract.tenantId)}" الحالي وتحويل الوحدة إلى شاغرة. ستبقى بيانات المستأجر وسجل مدفوعاته محفوظة ضمن سجل العقود السابقة لهذه الوحدة، ويمكنك بعدها تأجيرها لمستأجر جديد.`,
-    () => {
-      contract.active = false;
-      contract.endedAt = new Date().toISOString().slice(0, 10);
-      DataStore.saveContracts(contracts);
-
-      const units = DataStore.getUnits();
-      const unit = units.find((u) => u.id === unitId);
-      if (unit) unit.status = "vacant";
-      DataStore.saveUnits(units);
-
+    `سيتم إنهاء عقد "${tenantName}" الحالي وتحويل الوحدة إلى شاغرة. ستبقى بيانات المستأجر وسجل مدفوعاته محفوظة ضمن سجل العقود السابقة لهذه الوحدة، ويمكنك بعدها تأجيرها لمستأجر جديد.`,
+    async () => {
+      await Api.endLease(unitId);
       (onSaved || renderUnits)();
     }
   );
 }
 
-function openRenewContractModal(unitId, onSaved) {
-  const contracts = DataStore.getContracts();
-  const unitContracts = contracts.filter((c) => c.unitId === unitId);
-  const oldContract = unitContracts.find((c) => c.active);
-  if (!oldContract) return;
-
+function openRenewContractModal(unitId, oldContract, onSaved) {
   openModal(`
     <h3>تجديد العقد لنفس المستأجر</h3>
-    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">المستأجر: ${tenantName(oldContract.tenantId)}</p>
+    <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">المستأجر: ${oldContract.tenantName}</p>
     <form class="modal-form" id="renewForm">
       <label>تاريخ بدء العقد الجديد (هجري)
         ${hijriPickerHTML("start", todayHijri())}
@@ -509,7 +406,10 @@ function openRenewContractModal(unitId, onSaved) {
       <label>المبلغ المدفوع مقدمًا <input type="number" name="paidAmount" min="0" value="0" required></label>
       <label>طريقة الدفع (عند وجود مبلغ مقدم)
         <select name="method">
-          ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
+          <option value="نقدي">نقدي</option>
+          <option value="تحويل بنكي">تحويل بنكي</option>
+          <option value="شيك">شيك</option>
+          <option value="بطاقة">بطاقة</option>
         </select>
       </label>
       <div class="modal-actions">
@@ -521,73 +421,38 @@ function openRenewContractModal(unitId, onSaved) {
   document.getElementById("renewForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    const rent = Number(f.rent.value);
-    const paidAmount = Math.min(Number(f.paidAmount.value), rent);
-    const startISO = readHijriPicker(f, "start");
-
-    oldContract.active = false;
-    oldContract.endedAt = startISO;
-
-    const newContract = {
-      id: DataStore.uid("c"),
-      tenantId: oldContract.tenantId,
-      unitId,
-      start: startISO,
-      rent,
-      installments: Number(f.installments.value),
-      active: true,
-      payments: [],
-    };
-    if (paidAmount > 0) {
-      newContract.payments.push({ id: DataStore.uid("pay"), amount: paidAmount, method: f.method.value, date: startISO });
-    }
-    contracts.push(newContract);
-    DataStore.saveContracts(contracts);
-
-    const units = DataStore.getUnits();
-    const unit = units.find((u) => u.id === unitId);
-    if (unit) unit.rent = rent;
-    DataStore.saveUnits(units);
-
-    closeModal();
-    (onSaved || renderUnits)();
+    safely(async () => {
+      await Api.renew(unitId, {
+        start: readHijriPicker(f, "start"),
+        rent: Number(f.rent.value),
+        installments: Number(f.installments.value),
+        paidAmount: Number(f.paidAmount.value),
+        method: f.method.value,
+      });
+      closeModal();
+      (onSaved || renderUnits)();
+    });
   });
 }
 
 /* ---------- تفاصيل العقار ---------- */
-function renderPropertyDetails(propertyId) {
-  const property = DataStore.getProperties().find((p) => p.id === propertyId);
-  if (!property) {
+async function renderPropertyDetails(propertyId) {
+  let property;
+  try {
+    property = await Api.getPropertyDetail(propertyId);
+  } catch (err) {
     els.content.innerHTML = `<div class="empty-state">هذا العقار غير موجود أو تم حذفه.<br><a href="#units" class="link-btn" style="margin-top:10px;display:inline-block;">العودة للوحدات</a></div>`;
     return;
   }
-
-  const units = DataStore.getUnits().filter((u) => u.propertyId === propertyId);
-  const unitRows = units.map((u) => ({
-    unit: u,
-    contract: contractForUnit(u.id),
-  }));
-
-  const occupiedCount = units.filter((u) => u.status === "occupied").length;
-  const totalRent = unitRows.reduce((s, { contract }) => s + (contract ? contract.rent : 0), 0);
-  const totalPaid = unitRows.reduce((s, { contract }) => s + (contract ? contractPaidAmount(contract) : 0), 0);
-  const totalRemaining = Math.max(0, totalRent - totalPaid);
-
-  const allPayments = [];
-  unitRows.forEach(({ unit, contract }) => {
-    if (!contract) return;
-    (contract.payments || []).forEach((p) => allPayments.push({ ...p, unit, contract }));
-  });
-  allPayments.sort((a, b) => b.date.localeCompare(a.date));
 
   els.content.innerHTML = `
     <a href="#units" class="link-btn" style="display:inline-block;margin-bottom:16px;">→ العودة للوحدات</a>
 
     <div class="stat-grid">
-      <div class="stat-card"><div class="stat-label">عدد الوحدات</div><div class="stat-value">${units.length}</div></div>
-      <div class="stat-card"><div class="stat-label">الوحدات المؤجرة</div><div class="stat-value">${occupiedCount}</div></div>
-      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(totalPaid)}</div></div>
-      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(totalRemaining)}</div></div>
+      <div class="stat-card"><div class="stat-label">عدد الوحدات</div><div class="stat-value">${property.units.length}</div></div>
+      <div class="stat-card"><div class="stat-label">الوحدات المؤجرة</div><div class="stat-value">${property.units.filter((u) => u.status === "occupied").length}</div></div>
+      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(property.totalPaid)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(property.totalRemaining)}</div></div>
     </div>
 
     <div class="panel">
@@ -595,26 +460,25 @@ function renderPropertyDetails(propertyId) {
         <h2>${property.name}</h2>
         <span style="color:var(--text-dim);font-size:.85rem;">${property.city}</span>
       </div>
-      ${units.length ? `
+      ${property.units.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table">
             <thead><tr><th>الوحدة</th><th>الشارع</th><th>المستأجر</th><th>قيمة الإيجار</th><th>المبلغ المتبقي</th><th>حالة الدفع</th><th></th></tr></thead>
             <tbody>
-              ${unitRows.map(({ unit, contract }) => {
-                const paid = contract ? contractPaidAmount(contract) : 0;
-                const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
+              ${property.units.map((u) => {
+                const c = u.activeContract;
                 return `
                   <tr>
-                    <td><button class="link-btn cell-link" data-view-unit="${unit.id}">${unit.number}</button></td>
-                    <td>${unit.street || "—"}</td>
-                    <td>${contract ? tenantName(contract.tenantId) : "—"}</td>
-                    <td>${contract ? money(contract.rent) : "—"}</td>
-                    <td>${contract ? money(remaining) : "—"}</td>
-                    <td>${statusBadge(paymentStatusOf(contract))}</td>
+                    <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
+                    <td>${u.street || "—"}</td>
+                    <td>${c ? c.tenantName : "—"}</td>
+                    <td>${c ? money(c.rent) : "—"}</td>
+                    <td>${c ? money(c.remaining) : "—"}</td>
+                    <td>${statusBadge(c ? c.status : "vacant")}</td>
                     <td class="table-actions">
-                      ${contract
-                        ? `<button class="link-btn" data-record-payment="${contract.id}">تسجيل دفعة</button>`
-                        : `<button class="link-btn" data-rent-out="${unit.id}">تأجير الوحدة</button>`}
+                      ${c
+                        ? `<button class="link-btn" data-record-payment="${c.id}">تسجيل دفعة</button>`
+                        : `<button class="link-btn" data-rent-out="${u.id}">تأجير الوحدة</button>`}
                     </td>
                   </tr>
                 `;
@@ -626,17 +490,17 @@ function renderPropertyDetails(propertyId) {
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h2>قائمة المدفوعات (${allPayments.length})</h2></div>
-      ${allPayments.length ? `
+      <div class="panel-head"><h2>قائمة المدفوعات (${property.payments.length})</h2></div>
+      ${property.payments.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table">
             <thead><tr><th>التاريخ (هجري)</th><th>الوحدة</th><th>المستأجر</th><th>المبلغ</th><th>طريقة الدفع</th></tr></thead>
             <tbody>
-              ${allPayments.map((p) => `
+              ${property.payments.map((p) => `
                 <tr>
                   <td>${toHijri(p.date)}</td>
-                  <td>${p.unit.number}</td>
-                  <td>${tenantName(p.contract.tenantId)}</td>
+                  <td>${p.unitNumber}</td>
+                  <td>${p.tenantName}</td>
                   <td>${money(p.amount)}</td>
                   <td>${p.method}</td>
                 </tr>
@@ -660,37 +524,37 @@ function renderPropertyDetails(propertyId) {
 }
 
 /* ---------- تفاصيل الوحدة ---------- */
-function renderUnitDetails(unitId) {
-  const unit = DataStore.getUnits().find((u) => u.id === unitId);
-  if (!unit) {
+async function renderUnitDetails(unitId) {
+  let unit;
+  try {
+    unit = await Api.getUnitDetail(unitId);
+  } catch (err) {
     els.content.innerHTML = `<div class="empty-state">هذه الوحدة غير موجودة أو تم حذفها.<br><a href="#units" class="link-btn" style="margin-top:10px;display:inline-block;">العودة للوحدات</a></div>`;
     return;
   }
 
-  const contract = contractForUnit(unitId);
-  const paid = contract ? contractPaidAmount(contract) : 0;
-  const remaining = contract ? Math.max(0, contract.rent - paid) : 0;
-  const payments = contract ? [...(contract.payments || [])].sort((a, b) => b.date.localeCompare(a.date)) : [];
-  const schedule = contract ? installmentStatusList(contract) : [];
-  const pastContracts = contractHistoryForUnit(unitId);
+  const c = unit.activeContract;
+  const payments = c ? [...c.payments] : [];
+  const schedule = c ? c.schedule : [];
+  const pastContracts = unit.pastContracts || [];
 
   els.content.innerHTML = `
     <a href="#property/${unit.propertyId}" class="link-btn" style="display:inline-block;margin-bottom:16px;">→ العودة لتفاصيل العقار</a>
 
-    ${contract ? `
+    ${c ? `
       <div class="stat-grid">
-        <div class="stat-card"><div class="stat-label">قيمة الإيجار</div><div class="stat-value">${money(contract.rent)}</div></div>
-        <div class="stat-card accent"><div class="stat-label">المدفوع</div><div class="stat-value">${money(paid)}</div></div>
-        <div class="stat-card warn"><div class="stat-label">المتبقي</div><div class="stat-value">${money(remaining)}</div></div>
-        <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(paymentStatusOf(contract))}</div></div>
+        <div class="stat-card"><div class="stat-label">قيمة الإيجار</div><div class="stat-value">${money(c.rent)}</div></div>
+        <div class="stat-card accent"><div class="stat-label">المدفوع</div><div class="stat-value">${money(c.paidAmount)}</div></div>
+        <div class="stat-card warn"><div class="stat-label">المتبقي</div><div class="stat-value">${money(c.remaining)}</div></div>
+        <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(c.status)}</div></div>
       </div>
     ` : ""}
 
     <div class="panel">
       <div class="panel-head">
-        <h2>${propertyName(unit.propertyId)} — وحدة ${unit.number}</h2>
+        <h2>${unit.propertyName} — وحدة ${unit.number}</h2>
         <div class="table-actions">
-          ${contract ? `
+          ${c ? `
             <button class="btn btn-outline" id="renewBtn">تجديد العقد</button>
             <button class="btn btn-outline" id="endLeaseBtn" style="color:#dc2626;border-color:#dc2626;">إنهاء العقد</button>
             <button class="btn btn-primary" id="recordPaymentBtn">تسجيل دفعة</button>
@@ -699,13 +563,13 @@ function renderUnitDetails(unitId) {
       </div>
       <div style="padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;color:var(--text-dim);font-size:.88rem;">
         <div>الشارع<br><strong style="color:var(--text);">${unit.street || "—"}</strong></div>
-        <div>المستأجر<br><strong style="color:var(--text);">${contract ? tenantName(contract.tenantId) : "—"}</strong></div>
-        <div>تاريخ بدء الإيجار (هجري)<br><strong style="color:var(--text);">${contract ? toHijri(contract.start) : "—"}</strong></div>
-        <div>عدد الأقساط<br><strong style="color:var(--text);">${contract ? contract.installments : "—"}</strong></div>
+        <div>المستأجر<br><strong style="color:var(--text);">${c ? c.tenantName : "—"}</strong></div>
+        <div>تاريخ بدء الإيجار (هجري)<br><strong style="color:var(--text);">${c ? toHijri(c.start) : "—"}</strong></div>
+        <div>عدد الأقساط<br><strong style="color:var(--text);">${c ? c.installments : "—"}</strong></div>
       </div>
     </div>
 
-    ${contract ? `
+    ${c ? `
       <div class="panel">
         <div class="panel-head"><h2>جدول استحقاق الأقساط</h2></div>
         <div style="overflow-x:auto;">
@@ -714,7 +578,7 @@ function renderUnitDetails(unitId) {
             <tbody>
               ${schedule.map((inst) => `
                 <tr>
-                  <td>${inst.index} من ${contract.installments}</td>
+                  <td>${inst.index} من ${c.installments}</td>
                   <td>${toHijri(inst.dueDate)}</td>
                   <td>${money(inst.amount)}</td>
                   <td>${statusBadge(inst.status)}</td>
@@ -753,13 +617,13 @@ function renderUnitDetails(unitId) {
           <table class="data-table">
             <thead><tr><th>المستأجر</th><th>من (هجري)</th><th>إلى (هجري)</th><th>قيمة الإيجار</th><th>إجمالي المدفوع</th></tr></thead>
             <tbody>
-              ${pastContracts.map((c) => `
+              ${pastContracts.map((pc) => `
                 <tr>
-                  <td>${tenantName(c.tenantId)}</td>
-                  <td>${toHijri(c.start)}</td>
-                  <td>${c.endedAt ? toHijri(c.endedAt) : "—"}</td>
-                  <td>${money(c.rent)}</td>
-                  <td>${money(contractPaidAmount(c))}</td>
+                  <td>${pc.tenantName}</td>
+                  <td>${toHijri(pc.start)}</td>
+                  <td>${pc.endedAt ? toHijri(pc.endedAt) : "—"}</td>
+                  <td>${money(pc.rent)}</td>
+                  <td>${money(pc.paidAmount)}</td>
                 </tr>
               `).join("")}
             </tbody>
@@ -770,62 +634,44 @@ function renderUnitDetails(unitId) {
   `;
 
   const recordBtn = document.getElementById("recordPaymentBtn");
-  if (recordBtn) recordBtn.addEventListener("click", () => openRecordPaymentModal(contract.id, () => renderUnitDetails(unitId)));
+  if (recordBtn) recordBtn.addEventListener("click", () => openRecordPaymentModal(c.id, () => renderUnitDetails(unitId)));
   const rentOutBtn = document.getElementById("rentOutBtn");
   if (rentOutBtn) rentOutBtn.addEventListener("click", () => openRentOutModal(unit.id, () => renderUnitDetails(unitId)));
   const renewBtn = document.getElementById("renewBtn");
-  if (renewBtn) renewBtn.addEventListener("click", () => openRenewContractModal(unitId, () => renderUnitDetails(unitId)));
+  if (renewBtn) renewBtn.addEventListener("click", () => openRenewContractModal(unitId, c, () => renderUnitDetails(unitId)));
   const endLeaseBtn = document.getElementById("endLeaseBtn");
-  if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, () => renderUnitDetails(unitId)));
+  if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, c.tenantName, () => renderUnitDetails(unitId)));
 }
 
 /* ---------- لوحة المعلومات (dashboard overview) ---------- */
-function renderOverview() {
-  const units = DataStore.getUnits();
-  const contracts = DataStore.getContracts().filter((c) => c.active);
-
-  const occupiedUnits = units.filter((u) => u.status === "occupied");
-  const occupancyRate = units.length ? Math.round((occupiedUnits.length / units.length) * 100) : 0;
-
-  const totalRent = contracts.reduce((s, c) => s + c.rent, 0);
-  const totalPaid = contracts.reduce((s, c) => s + contractPaidAmount(c), 0);
-  const totalRemaining = contracts.reduce((s, c) => s + Math.max(0, c.rent - contractPaidAmount(c)), 0);
-  const collectionRate = totalRent ? Math.round((totalPaid / totalRent) * 100) : 0;
-
-  const topRemaining = contracts
-    .map((c) => ({ c, remaining: Math.max(0, c.rent - contractPaidAmount(c)) }))
-    .filter((x) => x.remaining > 0)
-    .sort((a, b) => b.remaining - a.remaining)
-    .slice(0, 5);
+async function renderOverview() {
+  const o = await Api.getOverview();
 
   els.content.innerHTML = `
     <div class="stat-grid">
-      <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${units.length}</div></div>
-      <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${occupancyRate}%</div></div>
-      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(totalPaid)}</div></div>
-      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(totalRemaining)}</div></div>
+      <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${o.totalUnits}</div></div>
+      <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${o.occupancyRate}%</div></div>
+      <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(o.totalPaid)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
     </div>
     <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
-      <div class="stat-card"><div class="stat-label">إجمالي قيمة العقود السارية</div><div class="stat-value">${money(totalRent)}</div></div>
-      <div class="stat-card accent"><div class="stat-label">نسبة التحصيل</div><div class="stat-value">${collectionRate}%</div></div>
+      <div class="stat-card"><div class="stat-label">إجمالي قيمة العقود السارية</div><div class="stat-value">${money(o.totalRent)}</div></div>
+      <div class="stat-card accent"><div class="stat-label">نسبة التحصيل</div><div class="stat-value">${o.collectionRate}%</div></div>
     </div>
     <div class="panel">
       <div class="panel-head"><h2>أعلى الوحدات مبالغ متبقية</h2></div>
-      ${topRemaining.length ? `
+      ${o.topRemaining.length ? `
         <table class="data-table">
           <thead><tr><th>المستأجر</th><th>الوحدة</th><th>المبلغ المتبقي</th><th>حالة الدفع</th></tr></thead>
           <tbody>
-            ${topRemaining.map(({ c, remaining }) => {
-              const unit = units.find((u) => u.id === c.unitId);
-              return `
-                <tr>
-                  <td>${tenantName(c.tenantId)}</td>
-                  <td>${unit ? `${propertyName(unit.propertyId)} - ${unit.number}` : "—"}</td>
-                  <td>${money(remaining)}</td>
-                  <td>${statusBadge(paymentStatusOf(c))}</td>
-                </tr>
-              `;
-            }).join("")}
+            ${o.topRemaining.map((r) => `
+              <tr>
+                <td>${r.tenantName}</td>
+                <td>${r.unitLabel}</td>
+                <td>${money(r.remaining)}</td>
+                <td>${statusBadge(r.status)}</td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
       ` : `<div class="empty-state">لا توجد مبالغ متبقية حاليًا. 👍</div>`}
@@ -833,50 +679,20 @@ function renderOverview() {
   `;
 }
 
-/* ---------- الإدارة (admin: delete properties & units) ---------- */
-function deleteProperty(propertyId) {
-  const units = DataStore.getUnits();
-  const removedUnitIds = units.filter((u) => u.propertyId === propertyId).map((u) => u.id);
-
-  DataStore.saveProperties(DataStore.getProperties().filter((p) => p.id !== propertyId));
-  DataStore.saveUnits(units.filter((u) => u.propertyId !== propertyId));
-  DataStore.saveTenants(DataStore.getTenants().filter((t) => !removedUnitIds.includes(t.unitId)));
-  DataStore.saveContracts(DataStore.getContracts().filter((c) => !removedUnitIds.includes(c.unitId)));
-}
-function deleteUnit(unitId) {
-  DataStore.saveUnits(DataStore.getUnits().filter((u) => u.id !== unitId));
-  DataStore.saveTenants(DataStore.getTenants().filter((t) => t.unitId !== unitId));
-  DataStore.saveContracts(DataStore.getContracts().filter((c) => c.unitId !== unitId));
-}
-
-function showMessage(title, text) {
-  openModal(`
-    <h3>${title}</h3>
-    <p style="color:var(--text-dim);font-size:.9rem;line-height:1.7;">${text}</p>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-primary" id="cancelModal">حسنًا</button>
-    </div>
-  `);
-}
-
+/* ---------- الإدارة (admin: edit/delete + backup) ---------- */
 function exportData() {
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    version: 2,
-    properties: DataStore.getProperties(),
-    units: DataStore.getUnits(),
-    tenants: DataStore.getTenants(),
-    contracts: DataStore.getContracts(),
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `aqari-data-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  safely(async () => {
+    const bundle = await Api.exportData();
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aqari-data-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
 }
 
 function handleImportFile(file) {
@@ -889,18 +705,14 @@ function handleImportFile(file) {
       showMessage("خطأ", "الملف غير صالح. تأكد من اختيار ملف تصدير تم إنشاؤه من هذا الموقع.");
       return;
     }
-    const isValid = ["properties", "units", "tenants", "contracts"].every((k) => Array.isArray(payload[k]));
-    if (!isValid) {
+    if (!Array.isArray(payload.properties)) {
       showMessage("خطأ", "صيغة الملف غير متوافقة مع هذا الموقع.");
       return;
     }
     openConfirmModal(
       "سيتم استبدال جميع البيانات الحالية (العقارات، الوحدات، المستأجرين، والعقود) بالبيانات الموجودة في الملف المستورد. لا يمكن التراجع عن هذا الإجراء.",
-      () => {
-        DataStore.saveProperties(payload.properties);
-        DataStore.saveUnits(payload.units);
-        DataStore.saveTenants(payload.tenants);
-        DataStore.saveContracts(payload.contracts);
+      async () => {
+        await Api.importData(payload);
         renderAdmin();
       }
     );
@@ -908,9 +720,9 @@ function handleImportFile(file) {
   reader.readAsText(file);
 }
 
-function renderAdmin() {
-  const properties = DataStore.getProperties();
-  const units = DataStore.getUnits();
+async function renderAdmin() {
+  const properties = await Api.getProperties();
+  const units = await Api.getUnits();
 
   els.content.innerHTML = `
     <div class="panel">
@@ -923,7 +735,7 @@ function renderAdmin() {
         </div>
       </div>
       <div style="padding:18px 22px;color:var(--text-dim);font-size:.85rem;line-height:1.7;">
-        البيانات محفوظة في متصفحك فقط. استخدم "تصدير" لحفظ نسخة كملف على جهازك، و"استيراد" لاستعادتها لاحقًا أو نقلها إلى متصفح أو جهاز آخر.
+        البيانات محفوظة الآن على خادم حقيقي مرتبط بقاعدة بيانات SQL. استخدم "تصدير" لحفظ نسخة كملف على جهازك، و"استيراد" لاستعادتها لاحقًا.
       </div>
     </div>
 
@@ -933,21 +745,18 @@ function renderAdmin() {
         <table class="data-table">
           <thead><tr><th>اسم العقار</th><th>المدينة</th><th>عدد الوحدات</th><th></th></tr></thead>
           <tbody>
-            ${properties.map((p) => {
-              const count = units.filter((u) => u.propertyId === p.id).length;
-              return `
-                <tr>
-                  <td>${p.name}</td>
-                  <td>${p.city}</td>
-                  <td>${count}</td>
-                  <td class="table-actions">
-                    <button class="link-btn" data-view-property="${p.id}">التفاصيل</button>
-                    <button class="link-btn" data-edit-property="${p.id}">تعديل</button>
-                    <button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button>
-                  </td>
-                </tr>
-              `;
-            }).join("")}
+            ${properties.map((p) => `
+              <tr>
+                <td>${p.name}</td>
+                <td>${p.city}</td>
+                <td>${p.unitsCount}</td>
+                <td class="table-actions">
+                  <button class="link-btn" data-view-property="${p.id}">التفاصيل</button>
+                  <button class="link-btn" data-edit-property="${p.id}">تعديل</button>
+                  <button class="link-btn link-danger" data-del-property="${p.id}">حذف العقار</button>
+                </td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
       ` : `<div class="empty-state">لا توجد عقارات بعد.</div>`}
@@ -961,7 +770,7 @@ function renderAdmin() {
           <tbody>
             ${units.map((u) => `
               <tr>
-                <td>${propertyName(u.propertyId)}</td>
+                <td>${u.propertyName}</td>
                 <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
                 <td>${u.street || "—"}</td>
                 <td>${statusBadge(u.status)}</td>
@@ -994,42 +803,33 @@ function renderAdmin() {
     btn.addEventListener("click", () => { window.location.hash = `#unit/${btn.dataset.viewUnit}`; });
   });
   els.content.querySelectorAll("[data-edit-property]").forEach((btn) => {
-    btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty));
+    btn.addEventListener("click", () => openEditPropertyModal(btn.dataset.editProperty, properties));
   });
   els.content.querySelectorAll("[data-edit-unit]").forEach((btn) => {
     btn.addEventListener("click", () => openEditUnitModal(btn.dataset.editUnit));
   });
-
   els.content.querySelectorAll("[data-del-property]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.delProperty;
-      const property = properties.find((p) => p.id === id);
-      const affectedUnits = units.filter((u) => u.propertyId === id).length;
-      const message = affectedUnits
-        ? `سيتم حذف العقار "${property.name}" نهائيًا، بالإضافة إلى ${affectedUnits} وحدة وكل بيانات المستأجرين والعقود المرتبطة بها. لا يمكن التراجع عن هذا الإجراء.`
-        : `سيتم حذف العقار "${property.name}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
-      openConfirmModal(message, () => { deleteProperty(id); renderAdmin(); });
+      const p = properties.find((x) => x.id == btn.dataset.delProperty);
+      const message = p.unitsCount
+        ? `سيتم حذف العقار "${p.name}" نهائيًا، بالإضافة إلى ${p.unitsCount} وحدة وكل بيانات المستأجرين والعقود المرتبطة بها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف العقار "${p.name}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
+      openConfirmModal(message, async () => { await Api.deleteProperty(p.id); renderAdmin(); });
     });
   });
-
   els.content.querySelectorAll("[data-del-unit]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const id = btn.dataset.delUnit;
-      const unit = units.find((u) => u.id === id);
-      const hasContract = !!contractForUnit(id);
-      const message = hasContract
-        ? `سيتم حذف الوحدة "${unit.number}" نهائيًا، بالإضافة إلى بيانات المستأجر والعقد المرتبطين بها. لا يمكن التراجع عن هذا الإجراء.`
-        : `سيتم حذف الوحدة "${unit.number}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
-      openConfirmModal(message, () => { deleteUnit(id); renderAdmin(); });
+      const u = units.find((x) => x.id == btn.dataset.delUnit);
+      const message = u.activeContract
+        ? `سيتم حذف الوحدة "${u.number}" نهائيًا، بالإضافة إلى بيانات المستأجر والعقد المرتبطين بها. لا يمكن التراجع عن هذا الإجراء.`
+        : `سيتم حذف الوحدة "${u.number}" نهائيًا. لا يمكن التراجع عن هذا الإجراء.`;
+      openConfirmModal(message, async () => { await Api.deleteUnit(u.id); renderAdmin(); });
     });
   });
 }
 
-function openEditPropertyModal(propertyId) {
-  const properties = DataStore.getProperties();
-  const property = properties.find((p) => p.id === propertyId);
-  if (!property) return;
-
+function openEditPropertyModal(propertyId, properties) {
+  const property = properties.find((p) => p.id == propertyId);
   openModal(`
     <h3>تعديل بيانات العقار</h3>
     <form class="modal-form" id="editPropertyForm">
@@ -1044,26 +844,18 @@ function openEditPropertyModal(propertyId) {
   document.getElementById("editPropertyForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-    property.name = f.name.value.trim();
-    property.city = f.city.value.trim();
-    DataStore.saveProperties(properties);
-    closeModal();
-    renderAdmin();
+    safely(async () => {
+      await Api.updateProperty(propertyId, f.name.value.trim(), f.city.value.trim());
+      closeModal();
+      renderAdmin();
+    });
   });
 }
 
-function openEditUnitModal(unitId) {
-  const properties = DataStore.getProperties();
-  const units = DataStore.getUnits();
-  const unit = units.find((u) => u.id === unitId);
-  if (!unit) return;
-
-  const contracts = DataStore.getContracts();
-  const contract = contracts.find((c) => c.unitId === unitId && c.active);
-  const tenants = DataStore.getTenants();
-  const tenant = contract ? tenants.find((t) => t.id === contract.tenantId) : null;
-
-  const startParts = contract ? getHijriParts(new Date(contract.start + "T00:00:00")) : todayHijri();
+async function openEditUnitModal(unitId) {
+  const [unit, properties] = await Promise.all([Api.getUnitDetail(unitId), Api.getProperties()]);
+  const c = unit.activeContract;
+  const startParts = c ? getHijriParts(new Date(c.start + "T00:00:00")) : todayHijri();
 
   openModal(`
     <h3>تعديل بيانات الوحدة</h3>
@@ -1075,15 +867,15 @@ function openEditUnitModal(unitId) {
       </label>
       <label>رقم الوحدة <input type="text" name="number" value="${unit.number}" required></label>
       <label>الشارع <input type="text" name="street" value="${unit.street || ""}" required></label>
-      ${tenant && contract ? `
-        <label>اسم المستأجر <input type="text" name="tenantName" value="${tenant.name}" required></label>
-        <label>رقم الجوال <input type="text" name="phone" value="${tenant.phone}" required></label>
+      ${c ? `
+        <label>اسم المستأجر <input type="text" name="tenantName" value="${c.tenantName}" required></label>
+        <label>رقم الجوال <input type="text" name="phone" value="${c.tenantPhone}" required></label>
         <label>تاريخ بدء الإيجار (هجري)
           ${hijriPickerHTML("start", startParts)}
         </label>
-        <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${contract.rent}" required></label>
-        <label>عدد الأقساط <input type="number" name="installments" min="1" value="${contract.installments}" required></label>
-        <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(contractPaidAmount(contract))}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
+        <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${c.rent}" required></label>
+        <label>عدد الأقساط <input type="number" name="installments" min="1" value="${c.installments}" required></label>
+        <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(c.paidAmount)}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
       ` : ""}
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
@@ -1094,28 +886,15 @@ function openEditUnitModal(unitId) {
   document.getElementById("editUnitForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
-
-    unit.propertyId = f.propertyId.value;
-    unit.number = f.number.value.trim();
-    unit.street = f.street.value.trim();
-    DataStore.saveUnits(units);
-
-    if (tenant && contract) {
-      tenant.name = f.tenantName.value.trim();
-      tenant.phone = f.phone.value.trim();
-      DataStore.saveTenants(tenants);
-
-      const rent = Number(f.rent.value);
-      contract.start = readHijriPicker(f, "start");
-      contract.rent = rent;
-      contract.installments = Number(f.installments.value);
-      DataStore.saveContracts(contracts);
-      unit.rent = rent;
-      DataStore.saveUnits(units);
-    }
-
-    closeModal();
-    renderAdmin();
+    safely(async () => {
+      await Api.updateUnit(unitId, f.propertyId.value, f.number.value.trim(), f.street.value.trim());
+      if (c) {
+        await Api.updateTenant(c.tenantId, f.tenantName.value.trim(), f.phone.value.trim());
+        await Api.updateContract(c.id, readHijriPicker(f, "start"), Number(f.rent.value), Number(f.installments.value));
+      }
+      closeModal();
+      renderAdmin();
+    });
   });
 }
 

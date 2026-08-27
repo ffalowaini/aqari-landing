@@ -1,15 +1,14 @@
-DataStore.seedIfNeeded();
-
 function requireAuth() {
-  const session = DataStore.getSession();
-  if (!session) {
+  const token = Api.getToken();
+  if (!token) {
     window.location.href = "login.html";
+    return null;
   }
-  return session;
+  return Api.getSessionUser();
 }
 
 function redirectIfLoggedIn() {
-  if (DataStore.getSession()) {
+  if (Api.getToken()) {
     window.location.href = "dashboard.html";
   }
 }
@@ -18,26 +17,22 @@ function initSignupForm() {
   redirectIfLoggedIn();
   const form = document.getElementById("signupForm");
   const errorBox = document.getElementById("authError");
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = form.name.value.trim();
-    const email = form.email.value.trim().toLowerCase();
+    const email = form.email.value.trim();
     const password = form.password.value;
 
     if (!name || !email || !password) {
       showError(errorBox, "الرجاء تعبئة جميع الحقول.");
       return;
     }
-    const users = DataStore.getUsers();
-    if (users.some((u) => u.email === email)) {
-      showError(errorBox, "يوجد حساب مسجل بهذا البريد الإلكتروني بالفعل.");
-      return;
+    try {
+      await Api.signup(name, email, password);
+      window.location.href = "dashboard.html";
+    } catch (err) {
+      showError(errorBox, err.message || "تعذّر إنشاء الحساب.");
     }
-    const user = { id: DataStore.uid("user"), name, email, password };
-    users.push(user);
-    DataStore.saveUsers(users);
-    DataStore.setSession(user);
-    window.location.href = "dashboard.html";
   });
 }
 
@@ -45,24 +40,16 @@ function initLoginForm() {
   redirectIfLoggedIn();
   const form = document.getElementById("loginForm");
   const errorBox = document.getElementById("authError");
-  form.addEventListener("submit", (e) => {
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const email = form.email.value.trim().toLowerCase();
+    const email = form.email.value.trim();
     const password = form.password.value;
-    const users = DataStore.getUsers();
-    let user = users.find((u) => u.email === email && u.password === password);
-
-    // Convenience demo account so the dashboard can be explored instantly.
-    if (!user && email === "demo@aqari.app" && password === "demo1234") {
-      user = { id: "demo_user", name: "حساب تجريبي", email };
+    try {
+      await Api.login(email, password);
+      window.location.href = "dashboard.html";
+    } catch (err) {
+      showError(errorBox, err.message || "البريد الإلكتروني أو كلمة المرور غير صحيحة.");
     }
-
-    if (!user) {
-      showError(errorBox, "البريد الإلكتروني أو كلمة المرور غير صحيحة.");
-      return;
-    }
-    DataStore.setSession(user);
-    window.location.href = "dashboard.html";
   });
 }
 
@@ -72,6 +59,6 @@ function showError(box, message) {
 }
 
 function logout() {
-  DataStore.clearSession();
+  Api.clearSession();
   window.location.href = "login.html";
 }
