@@ -21,7 +21,7 @@ els.modalOverlay.addEventListener("click", (e) => {
 
 /* ---------- helpers ---------- */
 function money(n) {
-  return Number(n).toLocaleString("ar-SA") + " ر.س";
+  return Number(n).toLocaleString("ar-SA") + " ⃁";
 }
 function toHijri(isoDate) {
   if (!isoDate) return "—";
@@ -29,7 +29,7 @@ function toHijri(isoDate) {
   if (Number.isNaN(d.getTime())) return "—";
   return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura", {
     year: "numeric", month: "long", day: "numeric",
-  }).format(d) + " هـ";
+  }).format(d);
 }
 function statusBadge(status) {
   const map = {
@@ -365,7 +365,9 @@ function openRecordPaymentModal(contractId, onSaved) {
           <option value="بطاقة">بطاقة</option>
         </select>
       </label>
-      <label>تاريخ الدفع <input type="date" name="date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+      <label>تاريخ الدفع (هجري)
+        ${hijriPickerHTML("date", todayHijri())}
+      </label>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
         <button type="submit" class="btn btn-primary">حفظ</button>
@@ -376,7 +378,7 @@ function openRecordPaymentModal(contractId, onSaved) {
     e.preventDefault();
     const f = e.target;
     safely(async () => {
-      await Api.recordPayment(contractId, Number(f.amount.value), f.method.value, f.date.value);
+      await Api.recordPayment(contractId, Number(f.amount.value), f.method.value, readHijriPicker(f, "date"));
       closeModal();
       (onSaved || renderUnits)();
     });
@@ -574,10 +576,11 @@ async function renderUnitDetails(unitId) {
         <div class="panel-head"><h2>جدول استحقاق الأقساط</h2></div>
         <div style="overflow-x:auto;">
           <table class="data-table">
-            <thead><tr><th>القسط</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th><th>الحالة</th></tr></thead>
+            <thead><tr><th>السنة</th><th>القسط</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th><th>الحالة</th></tr></thead>
             <tbody>
               ${schedule.map((inst) => `
                 <tr>
+                  <td>سنة ${inst.year}</td>
                   <td>${inst.index} من ${c.installments}</td>
                   <td>${toHijri(inst.dueDate)}</td>
                   <td>${money(inst.amount)}</td>
