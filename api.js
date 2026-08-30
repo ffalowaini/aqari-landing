@@ -111,6 +111,9 @@ const Api = {
   updateTenant(tenantId, name, phone) {
     return request("PUT", `/api/tenants/${tenantId}`, { name, phone });
   },
+  updateCalendarBasis(contractId, calendarBasis) {
+    return request("PUT", `/api/contracts/${contractId}/calendar-basis`, { calendarBasis });
+  },
 
   getOverview() { return request("GET", "/api/dashboard/overview"); },
 

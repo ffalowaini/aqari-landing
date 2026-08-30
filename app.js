@@ -26,13 +26,13 @@ els.modalOverlay.addEventListener("click", (e) => {
 const RIYAL_ICON = '<svg viewBox="0 0 1124.14 1256.39" style="width:.72em;height:.8em;display:inline-block;vertical-align:-0.05em;fill:currentColor;" aria-hidden="true"><path d="M699.62,1113.02h0c-20.06,44.48-33.32,92.75-38.4,143.37l424.51-90.24c20.06-44.47,33.31-92.75,38.4-143.37l-424.51,90.24Z"/><path d="M1085.73,895.8c20.06-44.47,33.32-92.75,38.4-143.37l-330.68,70.33v-135.2l292.27-62.11c20.06-44.47,33.32-92.75,38.4-143.37l-330.68,70.27V66.13c-50.67,28.45-95.67,66.32-132.25,110.99v403.35l-132.25,28.11V0c-50.67,28.44-95.67,66.32-132.25,110.99v525.69l-295.91,62.88c-20.06,44.47-33.33,92.75-38.42,143.37l334.33-71.05v170.26l-358.3,76.14c-20.06,44.47-33.32,92.75-38.4,143.37l375.04-79.7c30.53-6.35,56.77-24.4,73.83-49.24l68.78-101.97v-.02c7.14-10.55,11.3-23.27,11.3-36.97v-149.98l132.25-28.11v270.4l424.53-90.28Z"/></svg>';
 
 function money(n) {
-  return Number(n).toLocaleString("ar-SA") + " " + RIYAL_ICON;
+  return Number(n).toLocaleString("ar-SA-u-nu-latn") + " " + RIYAL_ICON;
 }
 function toHijri(isoDate) {
   if (!isoDate) return "—";
   const d = new Date(isoDate + "T00:00:00");
   if (Number.isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura", {
+  return new Intl.DateTimeFormat("ar-SA-u-ca-islamic-umalqura-nu-latn", {
     year: "numeric", month: "long", day: "numeric",
   }).format(d);
 }
@@ -198,6 +198,7 @@ async function renderUnits() {
         <td>${c ? money(c.rent) : "—"}</td>
         <td>${c ? c.installments : "—"}</td>
         <td>${c ? money(c.paidAmount) : "—"}</td>
+        <td>${c && c.oldArrears > 0 ? `<span style="color:#dc2626;font-weight:700;">${money(c.oldArrears)}</span>` : (c ? "—" : "—")}</td>
         <td>${c ? money(c.remaining) : "—"}</td>
         <td>${statusBadge(c ? c.status : "vacant")}</td>
         <td class="table-actions">
@@ -225,7 +226,7 @@ async function renderUnits() {
               <tr>
                 <th>العقار</th><th>الوحدة</th><th>الشارع</th><th>المستأجر</th>
                 <th>تاريخ بدء الإيجار (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
-                <th>المبلغ المدفوع</th><th>المبلغ المتبقي</th><th>حالة الدفع</th><th></th>
+                <th>المبلغ المدفوع</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -459,7 +460,8 @@ async function renderPropertyDetails(propertyId) {
       <div class="stat-card"><div class="stat-label">عدد الوحدات</div><div class="stat-value">${property.units.length}</div></div>
       <div class="stat-card"><div class="stat-label">الوحدات المؤجرة</div><div class="stat-value">${property.units.filter((u) => u.status === "occupied").length}</div></div>
       <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(property.totalPaid)}</div></div>
-      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(property.totalRemaining)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">متأخرات سابقة</div><div class="stat-value">${money(property.totalOldArrears)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">المتبقي (السنة الحالية)</div><div class="stat-value">${money(property.totalRemaining)}</div></div>
     </div>
 
     <div class="panel">
@@ -470,7 +472,7 @@ async function renderPropertyDetails(propertyId) {
       ${property.units.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table">
-            <thead><tr><th>الوحدة</th><th>الشارع</th><th>المستأجر</th><th>قيمة الإيجار</th><th>المبلغ المتبقي</th><th>حالة الدفع</th><th></th></tr></thead>
+            <thead><tr><th>الوحدة</th><th>الشارع</th><th>المستأجر</th><th>قيمة الإيجار</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th></th></tr></thead>
             <tbody>
               ${property.units.map((u) => {
                 const c = u.activeContract;
@@ -480,6 +482,7 @@ async function renderPropertyDetails(propertyId) {
                     <td>${u.street || "—"}</td>
                     <td>${c ? c.tenantName : "—"}</td>
                     <td>${c ? money(c.rent) : "—"}</td>
+                    <td>${c && c.oldArrears > 0 ? `<span style="color:#dc2626;font-weight:700;">${money(c.oldArrears)}</span>` : "—"}</td>
                     <td>${c ? money(c.remaining) : "—"}</td>
                     <td>${statusBadge(c ? c.status : "vacant")}</td>
                     <td class="table-actions">
@@ -552,7 +555,8 @@ async function renderUnitDetails(unitId) {
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">قيمة الإيجار</div><div class="stat-value">${money(c.rent)}</div></div>
         <div class="stat-card accent"><div class="stat-label">المدفوع</div><div class="stat-value">${money(c.paidAmount)}</div></div>
-        <div class="stat-card warn"><div class="stat-label">المتبقي</div><div class="stat-value">${money(c.remaining)}</div></div>
+        <div class="stat-card warn"><div class="stat-label">متأخرات سابقة</div><div class="stat-value">${money(c.oldArrears)}</div></div>
+        <div class="stat-card warn"><div class="stat-label">المتبقي (السنة الحالية)</div><div class="stat-value">${money(c.remaining)}</div></div>
         <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(c.status)}</div></div>
       </div>
     ` : ""}
@@ -573,6 +577,14 @@ async function renderUnitDetails(unitId) {
         <div>المستأجر<br><strong style="color:var(--text);">${c ? c.tenantName : "—"}</strong></div>
         <div>تاريخ بدء الإيجار (هجري)<br><strong style="color:var(--text);">${c ? toHijri(c.start) : "—"}</strong></div>
         <div>عدد الأقساط<br><strong style="color:var(--text);">${c ? c.installments : "—"}</strong></div>
+        ${c ? `
+          <div>حساب التجديد السنوي<br>
+            <strong style="color:var(--text);">${c.calendarBasis === "GREGORIAN" ? "ميلادي" : "هجري (افتراضي)"}</strong>
+            <button class="link-btn" id="toggleCalendarBtn" style="margin-right:8px;font-size:.8rem;">
+              ${c.calendarBasis === "GREGORIAN" ? "التحويل إلى هجري" : "التحويل إلى ميلادي"}
+            </button>
+          </div>
+        ` : ""}
       </div>
     </div>
 
@@ -649,6 +661,14 @@ async function renderUnitDetails(unitId) {
   if (renewBtn) renewBtn.addEventListener("click", () => openRenewContractModal(unitId, c, () => renderUnitDetails(unitId)));
   const endLeaseBtn = document.getElementById("endLeaseBtn");
   if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, c.tenantName, () => renderUnitDetails(unitId)));
+  const toggleCalendarBtn = document.getElementById("toggleCalendarBtn");
+  if (toggleCalendarBtn) toggleCalendarBtn.addEventListener("click", () => {
+    const next = c.calendarBasis === "GREGORIAN" ? "HIJRI" : "GREGORIAN";
+    safely(async () => {
+      await Api.updateCalendarBasis(c.id, next);
+      renderUnitDetails(unitId);
+    });
+  });
 }
 
 /* ---------- لوحة المعلومات (dashboard overview) ---------- */
@@ -660,29 +680,55 @@ async function renderOverview() {
       <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${o.totalUnits}</div></div>
       <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${o.occupancyRate}%</div></div>
       <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(o.totalPaid)}</div></div>
-      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
+      <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي (متأخرات + السنة الحالية)</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
     </div>
     <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
       <div class="stat-card"><div class="stat-label">إجمالي قيمة العقود السارية</div><div class="stat-value">${money(o.totalRent)}</div></div>
       <div class="stat-card accent"><div class="stat-label">نسبة التحصيل</div><div class="stat-value">${o.collectionRate}%</div></div>
     </div>
+
     <div class="panel">
-      <div class="panel-head"><h2>أعلى الوحدات مبالغ متبقية</h2></div>
-      ${o.topRemaining.length ? `
-        <table class="data-table">
-          <thead><tr><th>المستأجر</th><th>الوحدة</th><th>المبلغ المتبقي</th><th>حالة الدفع</th></tr></thead>
-          <tbody>
-            ${o.topRemaining.map((r) => `
-              <tr>
-                <td>${r.tenantName}</td>
-                <td>${r.unitLabel}</td>
-                <td>${money(r.remaining)}</td>
-                <td>${statusBadge(r.status)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      ` : `<div class="empty-state">لا توجد مبالغ متبقية حاليًا. 👍</div>`}
+      <div class="panel-head"><h2>الوحدات التي عليها مبالغ غير مسددة (${o.unpaidUnits.length})</h2></div>
+      ${o.unpaidUnits.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>المستأجر</th><th>الوحدة</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>الإجمالي</th><th>حالة الدفع</th></tr></thead>
+            <tbody>
+              ${o.unpaidUnits.map((r) => `
+                <tr>
+                  <td>${r.tenantName}</td>
+                  <td>${r.unitLabel}</td>
+                  <td>${r.oldArrears > 0 ? `<span style="color:#dc2626;font-weight:700;">${money(r.oldArrears)}</span>` : "—"}</td>
+                  <td>${money(r.currentRemaining)}</td>
+                  <td><strong>${money(r.totalOwed)}</strong></td>
+                  <td>${statusBadge(r.status)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">جميع الوحدات مسددة بالكامل. 👍</div>`}
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>مبالغ مستحقة الشهر القادم (${o.upcomingNextMonth.length})</h2></div>
+      ${o.upcomingNextMonth.length ? `
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>المستأجر</th><th>الوحدة</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th></tr></thead>
+            <tbody>
+              ${o.upcomingNextMonth.map((p) => `
+                <tr>
+                  <td>${p.tenantName}</td>
+                  <td>${p.unitLabel}</td>
+                  <td>${toHijri(p.dueDate)}</td>
+                  <td>${money(p.amount)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="empty-state">لا توجد دفعات مستحقة خلال الشهر القادم.</div>`}
     </div>
   `;
 }
