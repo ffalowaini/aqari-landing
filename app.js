@@ -192,7 +192,6 @@ async function renderUnits() {
       <tr>
         <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${u.propertyName}</button></td>
         <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
-        <td>${u.street || "—"}</td>
         <td>${c ? c.tenantName : "—"}</td>
         <td>${c ? toHijri(c.start) : "—"}</td>
         <td>${c ? money(c.rent) : "—"}</td>
@@ -224,7 +223,7 @@ async function renderUnits() {
           <table class="data-table">
             <thead>
               <tr>
-                <th>العقار</th><th>الوحدة</th><th>الشارع</th><th>المستأجر</th>
+                <th>العقار</th><th>الوحدة</th><th>المستأجر</th>
                 <th>تاريخ بدء الإيجار (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
                 <th>المبلغ المدفوع</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th></th>
               </tr>
@@ -688,7 +687,7 @@ async function renderOverview() {
     </div>
 
     <div class="panel">
-      <div class="panel-head"><h2>الوحدات التي عليها مبالغ غير مسددة (${o.unpaidUnits.length})</h2></div>
+      <div class="panel-head"><h2>الوحدات المتأخرة في السداد (${o.unpaidUnits.length})</h2></div>
       ${o.unpaidUnits.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table">
@@ -707,7 +706,7 @@ async function renderOverview() {
             </tbody>
           </table>
         </div>
-      ` : `<div class="empty-state">جميع الوحدات مسددة بالكامل. 👍</div>`}
+      ` : `<div class="empty-state">لا توجد وحدات متأخرة في السداد حاليًا. 👍</div>`}
     </div>
 
     <div class="panel">
