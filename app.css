@@ -128,7 +128,8 @@
 }
 .modal-overlay.open{display:flex;}
 .modal{
-  width:100%;max-width:440px;background:var(--surface);border:1px solid var(--border);
+  width:100%;max-width:440px;max-height:90vh;overflow-y:auto;
+  background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius);padding:28px;box-shadow:var(--shadow);
 }
 .modal h3{font-size:1.1rem;font-weight:800;margin-bottom:18px;}
