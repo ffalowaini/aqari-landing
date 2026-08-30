@@ -1013,6 +1013,14 @@ async function openEditUnitModal(unitId) {
         <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${c.rent}" required></label>
         <label>عدد الأقساط <input type="number" name="installments" min="1" value="${c.installments}" required></label>
         <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(c.paidAmount)}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
+        <label style="flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:8px;">
+          <input type="checkbox" id="oldArrearsToggle" style="width:auto;" ${c.oldArrearsOverride != null ? "checked" : ""}>
+          تعديل يدوي للمتأخرات السابقة (المحسوبة تلقائيًا: ${money(c.computedOldArrears)})
+        </label>
+        <label id="oldArrearsFieldWrap" ${c.oldArrearsOverride != null ? "" : 'style="display:none;"'}>
+          متأخرات سابقة (تعديل يدوي)
+          <input type="number" name="oldArrearsOverride" min="0" value="${c.oldArrearsOverride != null ? c.oldArrearsOverride : c.computedOldArrears}">
+        </label>
       ` : ""}
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
@@ -1020,6 +1028,12 @@ async function openEditUnitModal(unitId) {
       </div>
     </form>
   `);
+  const oldArrearsToggle = document.getElementById("oldArrearsToggle");
+  if (oldArrearsToggle) {
+    oldArrearsToggle.addEventListener("change", () => {
+      document.getElementById("oldArrearsFieldWrap").style.display = oldArrearsToggle.checked ? "" : "none";
+    });
+  }
   document.getElementById("editUnitForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
@@ -1027,7 +1041,10 @@ async function openEditUnitModal(unitId) {
       await Api.updateUnit(unitId, f.propertyId.value, f.number.value.trim(), f.street.value.trim());
       if (c) {
         await Api.updateTenant(c.tenantId, f.tenantName.value.trim(), f.phone.value.trim());
-        await Api.updateContract(c.id, readHijriPicker(f, "start"), Number(f.rent.value), Number(f.installments.value));
+        const oldArrearsOverride = oldArrearsToggle && oldArrearsToggle.checked
+          ? Number(f.oldArrearsOverride.value)
+          : null;
+        await Api.updateContract(c.id, readHijriPicker(f, "start"), Number(f.rent.value), Number(f.installments.value), oldArrearsOverride);
       }
       closeModal();
       renderAdmin();
