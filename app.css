@@ -67,6 +67,24 @@
 }
 .panel-head h2{font-size:1rem;font-weight:800;}
 
+/* DASHBOARD DRAG-AND-DROP BOXES */
+.dash-boxes{display:flex;flex-direction:column;}
+.dash-box{
+  border:1px solid transparent;border-radius:var(--radius);
+  transition:border-color .15s,box-shadow .15s,opacity .15s;
+}
+.dash-box.dragging{opacity:.4;}
+.dash-box-handle{
+  display:flex;align-items:center;gap:10px;
+  padding:6px 10px;margin-bottom:8px;border-radius:8px;
+  cursor:grab;user-select:none;width:fit-content;
+  color:var(--text-dim);font-size:.8rem;font-weight:700;
+}
+.dash-box-handle:hover{background:var(--surface-2);color:var(--text);}
+.dash-box-handle:active{cursor:grabbing;}
+.dash-box-grip{letter-spacing:-2px;font-size:.9rem;}
+.dash-box.dragging .dash-box-handle{background:var(--surface-2);}
+
 /* DATA TABLE */
 .data-table{width:100%;border-collapse:collapse;}
 .data-table th,.data-table td{
