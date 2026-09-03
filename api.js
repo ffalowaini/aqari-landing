@@ -105,8 +105,8 @@ const Api = {
   recordPayment(contractId, amount, method, date) {
     return request("POST", `/api/contracts/${contractId}/payments`, { amount, method, date });
   },
-  updateContract(contractId, start, rent, installments, oldArrearsOverride) {
-    return request("PUT", `/api/contracts/${contractId}`, { start, rent, installments, oldArrearsOverride });
+  updateContract(contractId, start, rent, installments, oldArrearsOverride, contractFormat, marketValueEstimate) {
+    return request("PUT", `/api/contracts/${contractId}`, { start, rent, installments, oldArrearsOverride, contractFormat, marketValueEstimate });
   },
   updateTenant(tenantId, name, phone) {
     return request("PUT", `/api/tenants/${tenantId}`, { name, phone });

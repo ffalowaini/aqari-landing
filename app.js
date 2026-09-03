@@ -47,6 +47,13 @@ function statusBadge(status) {
     paid: ["مدفوع", "badge-green"],
     overdue: ["متأخر", "badge-red"],
     upcoming: ["قادم", "badge-gray"],
+    committed: ["ملتزم", "badge-green"],
+    semi_committed: ["شبه ملتزم", "badge-orange"],
+    delinquent: ["مماطل", "badge-red"],
+    near_market: ["قريب من السوق", "badge-green"],
+    moderate_gap: ["فارق متوسط", "badge-orange"],
+    far_from_market: ["بعيد جدًا عن السوق", "badge-red"],
+    unknown: ["غير مقيّم", "badge-gray"],
   };
   const [label, cls] = map[status] || [status, "badge-gray"];
   return `<span class="badge ${cls}">${label}</span>`;
@@ -200,6 +207,7 @@ async function renderUnits() {
         <td>${c && c.oldArrears > 0 ? `<span style="color:#dc2626;font-weight:700;">${money(c.oldArrears)}</span>` : (c ? "—" : "—")}</td>
         <td>${c ? money(c.remaining) : "—"}</td>
         <td>${statusBadge(c ? c.status : "vacant")}</td>
+        <td>${c ? statusBadge(c.paymentCommitmentClassification) : "—"}</td>
         <td class="table-actions">
           ${c
             ? `<button class="link-btn" data-record-payment="${c.id}">تسجيل دفعة</button>`
@@ -225,7 +233,7 @@ async function renderUnits() {
               <tr>
                 <th>العقار</th><th>الوحدة</th><th>المستأجر</th>
                 <th>تاريخ بدء الإيجار (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
-                <th>المبلغ المدفوع</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th></th>
+                <th>المبلغ المدفوع</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th>الالتزام بالسداد</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -332,6 +340,13 @@ function openRentOutModal(unitId, onSaved) {
           <option value="بطاقة">بطاقة</option>
         </select>
       </label>
+      <label>نوع العقد
+        <select name="contractFormat">
+          <option value="PAPER">ورقي</option>
+          <option value="ELECTRONIC">إلكتروني (موثق)</option>
+        </select>
+      </label>
+      <label>القيمة السوقية التقديرية (اختياري) <input type="number" name="marketValueEstimate" min="0"></label>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
         <button type="submit" class="btn btn-primary">حفظ</button>
@@ -350,6 +365,8 @@ function openRentOutModal(unitId, onSaved) {
         installments: Number(f.installments.value),
         paidAmount: Number(f.paidAmount.value),
         method: f.method.value,
+        contractFormat: f.contractFormat.value,
+        marketValueEstimate: f.marketValueEstimate.value ? Number(f.marketValueEstimate.value) : null,
       });
       closeModal();
       (onSaved || renderUnits)();
@@ -404,6 +421,9 @@ function openRenewContractModal(unitId, oldContract, onSaved) {
   openModal(`
     <h3>تجديد العقد لنفس المستأجر</h3>
     <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">المستأجر: ${oldContract.tenantName}</p>
+    <p style="margin:-6px 0 0;font-size:.85rem;">
+      تصنيف السعر الحالي: ${statusBadge(oldContract.priceClassification)} &nbsp; الالتزام بالسداد: ${statusBadge(oldContract.paymentCommitmentClassification)}
+    </p>
     <form class="modal-form" id="renewForm">
       <label>تاريخ بدء العقد الجديد (هجري)
         ${hijriPickerHTML("start", todayHijri())}
@@ -419,6 +439,13 @@ function openRenewContractModal(unitId, oldContract, onSaved) {
           <option value="بطاقة">بطاقة</option>
         </select>
       </label>
+      <label>نوع العقد
+        <select name="contractFormat">
+          <option value="PAPER" ${oldContract.contractFormat === "PAPER" ? "selected" : ""}>ورقي</option>
+          <option value="ELECTRONIC" ${oldContract.contractFormat === "ELECTRONIC" ? "selected" : ""}>إلكتروني (موثق)</option>
+        </select>
+      </label>
+      <label>القيمة السوقية التقديرية (اختياري) <input type="number" name="marketValueEstimate" min="0" value="${oldContract.marketValueEstimate != null ? oldContract.marketValueEstimate : ""}"></label>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
         <button type="submit" class="btn btn-primary">تجديد العقد</button>
@@ -435,6 +462,8 @@ function openRenewContractModal(unitId, oldContract, onSaved) {
         installments: Number(f.installments.value),
         paidAmount: Number(f.paidAmount.value),
         method: f.method.value,
+        contractFormat: f.contractFormat.value,
+        marketValueEstimate: f.marketValueEstimate.value ? Number(f.marketValueEstimate.value) : null,
       });
       closeModal();
       (onSaved || renderUnits)();
@@ -557,6 +586,7 @@ async function renderUnitDetails(unitId) {
         <div class="stat-card warn"><div class="stat-label">متأخرات سابقة</div><div class="stat-value">${money(c.oldArrears)}</div></div>
         <div class="stat-card warn"><div class="stat-label">المتبقي (السنة الحالية)</div><div class="stat-value">${money(c.remaining)}</div></div>
         <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(c.status)}</div></div>
+        <div class="stat-card"><div class="stat-label">الالتزام بالسداد</div><div class="stat-value">${statusBadge(c.paymentCommitmentClassification)}</div></div>
       </div>
     ` : ""}
 
@@ -583,6 +613,9 @@ async function renderUnitDetails(unitId) {
               ${c.calendarBasis === "GREGORIAN" ? "التحويل إلى هجري" : "التحويل إلى ميلادي"}
             </button>
           </div>
+          <div>نوع العقد<br><strong style="color:var(--text);">${c.contractFormat === "ELECTRONIC" ? "إلكتروني (موثق)" : "ورقي"}</strong></div>
+          <div>القيمة السوقية التقديرية<br><strong style="color:var(--text);">${c.marketValueEstimate != null ? money(c.marketValueEstimate) : "لم تُقيَّم"}</strong></div>
+          <div>تصنيف السعر مقابل السوق<br>${statusBadge(c.priceClassification)}</div>
         ` : ""}
       </div>
     </div>
@@ -1029,6 +1062,13 @@ async function openEditUnitModal(unitId) {
         <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${c.rent}" required></label>
         <label>عدد الأقساط <input type="number" name="installments" min="1" value="${c.installments}" required></label>
         <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(c.paidAmount)}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
+        <label>نوع العقد
+          <select name="contractFormat">
+            <option value="PAPER" ${c.contractFormat !== "ELECTRONIC" ? "selected" : ""}>ورقي</option>
+            <option value="ELECTRONIC" ${c.contractFormat === "ELECTRONIC" ? "selected" : ""}>إلكتروني (موثق)</option>
+          </select>
+        </label>
+        <label>القيمة السوقية التقديرية (اختياري) <input type="number" name="marketValueEstimate" min="0" value="${c.marketValueEstimate != null ? c.marketValueEstimate : ""}"></label>
         <label style="flex-direction:row-reverse;justify-content:flex-end;align-items:center;gap:8px;">
           <input type="checkbox" id="oldArrearsToggle" style="width:auto;" ${c.oldArrearsOverride != null ? "checked" : ""}>
           تعديل يدوي للمتأخرات السابقة (المحسوبة تلقائيًا: ${money(c.computedOldArrears)})
@@ -1060,7 +1100,8 @@ async function openEditUnitModal(unitId) {
         const oldArrearsOverride = oldArrearsToggle && oldArrearsToggle.checked
           ? Number(f.oldArrearsOverride.value)
           : null;
-        await Api.updateContract(c.id, readHijriPicker(f, "start"), Number(f.rent.value), Number(f.installments.value), oldArrearsOverride);
+        const marketValueEstimate = f.marketValueEstimate.value ? Number(f.marketValueEstimate.value) : null;
+        await Api.updateContract(c.id, readHijriPicker(f, "start"), Number(f.rent.value), Number(f.installments.value), oldArrearsOverride, f.contractFormat.value, marketValueEstimate);
       }
       closeModal();
       renderAdmin();
