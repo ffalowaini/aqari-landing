@@ -699,8 +699,8 @@ async function renderOverview() {
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${o.totalUnits}</div></div>
         <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${o.occupancyRate}%</div></div>
-        <div class="stat-card accent"><div class="stat-label">إجمالي المحصّل</div><div class="stat-value">${money(o.totalPaid)}</div></div>
-        <div class="stat-card warn"><div class="stat-label">إجمالي المتبقي (متأخرات + السنة الحالية)</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
+        <div class="stat-card accent"><div class="stat-label">المحصّل من العقود السارية</div><div class="stat-value">${money(o.totalPaid)}</div></div>
+        <div class="stat-card warn"><div class="stat-label">المتبقي من العقود السارية (متأخرات + السنة الحالية)</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
       </div>
     `,
     stats2: `
@@ -755,17 +755,9 @@ async function renderOverview() {
         ` : `<div class="empty-state">لا توجد دفعات مستحقة خلال الشهر القادم.</div>`}
       </div>
     `,
-    thisYear: `
-      <div class="stat-grid" style="grid-template-columns:repeat(3,1fr);">
-        <div class="stat-card accent"><div class="stat-label">المحصّل خلال عام ${o.currentHijriYear} هـ</div><div class="stat-value">${money(o.paidThisHijriYear)}</div></div>
-        <div class="stat-card"><div class="stat-label">عدد الدفعات هذا العام</div><div class="stat-value">${o.paymentsCountThisHijriYear}</div></div>
-        <div class="stat-card"><div class="stat-label">عقود جديدة هذا العام</div><div class="stat-value">${o.newContractsThisHijriYear}</div></div>
-      </div>
-    `,
   };
 
   const order = getDashOrder(Object.keys(boxes));
-  const titles = { ...DASH_BOX_TITLES, thisYear: `أرقام عام ${o.currentHijriYear} هـ فقط` };
 
   els.content.innerHTML = `
     <div class="dash-boxes" id="dashBoxes">
@@ -773,7 +765,7 @@ async function renderOverview() {
         <div class="dash-box" data-box-id="${id}">
           <div class="dash-box-handle" draggable="true" title="اسحب لإعادة الترتيب">
             <span class="dash-box-grip">⠿⠿</span>
-            <span class="dash-box-title">${titles[id]}</span>
+            <span class="dash-box-title">${DASH_BOX_TITLES[id]}</span>
           </div>
           <div class="dash-box-body">${boxes[id]}</div>
         </div>
