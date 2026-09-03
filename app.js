@@ -832,6 +832,20 @@ function exportData() {
   });
 }
 
+function exportExcel() {
+  safely(async () => {
+    const blob = await Api.exportExcel();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aqari-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+}
+
 function handleImportFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
@@ -866,13 +880,14 @@ async function renderAdmin() {
       <div class="panel-head">
         <h2>نسخ احتياطي للبيانات</h2>
         <div class="table-actions">
-          <button class="btn btn-outline" id="exportDataBtn">تصدير البيانات</button>
+          <button class="btn btn-outline" id="exportExcelBtn">📊 تصدير Excel</button>
+          <button class="btn btn-outline" id="exportDataBtn">تصدير البيانات (JSON)</button>
           <button class="btn btn-outline" id="importDataBtn">استيراد البيانات</button>
           <input type="file" id="importFileInput" accept="application/json,.json" style="display:none">
         </div>
       </div>
       <div style="padding:18px 22px;color:var(--text-dim);font-size:.85rem;line-height:1.7;">
-        البيانات محفوظة الآن على خادم حقيقي مرتبط بقاعدة بيانات SQL. استخدم "تصدير" لحفظ نسخة كملف على جهازك، و"استيراد" لاستعادتها لاحقًا.
+        البيانات محفوظة الآن على خادم حقيقي مرتبط بقاعدة بيانات SQL. "تصدير Excel" ينزّل تقريرًا منسّقًا (نظرة عامة، الوحدات، المدفوعات) للاطلاع أو الأرشفة. استخدم "تصدير البيانات (JSON)" لحفظ نسخة كاملة قابلة لإعادة الاستيراد لاحقًا عبر "استيراد البيانات".
       </div>
     </div>
 
@@ -923,6 +938,7 @@ async function renderAdmin() {
     </div>
   `;
 
+  document.getElementById("exportExcelBtn").addEventListener("click", exportExcel);
   document.getElementById("exportDataBtn").addEventListener("click", exportData);
   document.getElementById("importDataBtn").addEventListener("click", () => {
     document.getElementById("importFileInput").click();

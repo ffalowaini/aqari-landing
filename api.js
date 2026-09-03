@@ -119,4 +119,26 @@ const Api = {
 
   exportData() { return request("GET", "/api/data/export"); },
   importData(bundle) { return request("POST", "/api/data/import", bundle); },
+  async exportExcel() {
+    const token = getToken();
+    let response;
+    try {
+      response = await fetch(API_BASE_URL + "/api/data/export-excel", {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+      });
+    } catch (e) {
+      throw new ApiError("تعذّر الاتصال بالخادم. تأكد أن الخادم المحلي يعمل على " + API_BASE_URL, 0);
+    }
+    if (response.status === 401) {
+      clearSession();
+      window.location.href = "login.html";
+      throw new ApiError("انتهت الجلسة", 401);
+    }
+    if (!response.ok) {
+      let message = "تعذّر تصدير ملف Excel.";
+      try { message = (await response.json()).message || message; } catch (e) { /* ignore */ }
+      throw new ApiError(message, response.status);
+    }
+    return response.blob();
+  },
 };
