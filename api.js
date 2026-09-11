@@ -3,14 +3,17 @@
   Replaces the old localStorage-based DataStore — all reads/writes now
   go over HTTP to a real server backed by a SQL database.
 
-  Local dev (served from localhost/127.0.0.1) talks to the local backend
-  from aqari-backend/README.md; anywhere else (e.g. the live GitHub Pages
-  site) talks to the deployed Render backend.
+  Local dev (served from localhost/127.0.0.1, or from a LAN IP when the
+  frontend is opened from another device on the same network) talks to the
+  local backend from aqari-backend/README.md, on that same host; anywhere
+  else (e.g. the live GitHub Pages site) talks to the deployed Render
+  backend.
 */
-const API_BASE_URL =
-  (location.hostname === "localhost" || location.hostname === "127.0.0.1")
-    ? "http://localhost:8081"
-    : "https://aqari-backend-tkmq.onrender.com";
+const isLocalHost = /^(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})$/
+  .test(location.hostname);
+const API_BASE_URL = isLocalHost
+  ? `${location.protocol}//${location.hostname}:8081`
+  : "https://aqari-backend-tkmq.onrender.com";
 
 const TOKEN_KEY = "aqari_token";
 const USER_KEY = "aqari_user";
