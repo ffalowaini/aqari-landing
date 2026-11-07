@@ -36,6 +36,11 @@ function toHijri(isoDate) {
     year: "numeric", month: "long", day: "numeric",
   }).format(d);
 }
+/* Start of the contract's current annual cycle (full start → end on hover), with which year of the lease it is and the original start underneath. */
+function currentPeriodHTML(c) {
+  return `<div style="white-space:nowrap;" title="${toHijri(c.currentPeriodStart)} ← ${toHijri(c.currentPeriodEnd)}">${toHijri(c.currentPeriodStart)}</div>`
+    + `<div style="font-size:.75rem;color:var(--text-dim);">السنة ${c.currentYearNumber} · بدأ ${toHijri(c.start)}</div>`;
+}
 function statusBadge(status) {
   const map = {
     vacant: ["شاغرة", "badge-gray"],
@@ -47,6 +52,7 @@ function statusBadge(status) {
     paid: ["مدفوع", "badge-green"],
     overdue: ["متأخر", "badge-red"],
     upcoming: ["قادم", "badge-gray"],
+    ended: ["منتهي", "badge-gray"],
     committed: ["ملتزم", "badge-green"],
     semi_committed: ["شبه ملتزم", "badge-orange"],
     delinquent: ["مماطل", "badge-red"],
@@ -76,7 +82,7 @@ function getHijriParts(date) {
   return { y: obj.year, m: obj.month, d: obj.day };
 }
 function todayHijri() {
-  return getHijriParts(new Date());
+  return getHijriParts(appToday());
 }
 function hijriToGregorianISO(hy, hm, hd) {
   const today = new Date();
@@ -97,10 +103,10 @@ function hijriToGregorianISO(hy, hm, hd) {
   }
   return base.toISOString().slice(0, 10);
 }
-function hijriPickerHTML(prefix, defaultParts) {
+function hijriPickerHTML(prefix, defaultParts, yearsBack = 3, yearsAhead = 2) {
   const days = Array.from({ length: 30 }, (_, i) => i + 1);
   const years = [];
-  for (let y = defaultParts.y - 3; y <= defaultParts.y + 2; y++) years.push(y);
+  for (let y = defaultParts.y - yearsBack; y <= defaultParts.y + yearsAhead; y++) years.push(y);
   return `
     <div class="hijri-picker">
       <select name="${prefix}Day">${days.map((d) => `<option value="${d}" ${d === defaultParts.d ? "selected" : ""}>${d}</option>`).join("")}</select>
@@ -115,6 +121,88 @@ function readHijriPicker(form, prefix) {
   const hd = Number(form[prefix + "Day"].value);
   return hijriToGregorianISO(hy, hm, hd);
 }
+
+/* ---------- table filters (client-side, all pages) ----------
+   filterBarHTML(key, selects) renders a search box + dropdowns above the table
+   marked data-filter-table="key". Dropdowns match a row's data-f-<field>
+   attribute exactly; the search box matches any
+   text in the row. Chosen filters are remembered per table while the app is
+   open, so re-rendering after e.g. recording a payment keeps them. */
+const filterState = {};
+
+function normalizeArabic(text) {
+  return String(text)
+    .toLowerCase()
+    .replace(/[ً-ْـ]/g, "")          // tashkeel + tatweel
+    .replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+}
+function escapeAttr(v) {
+  return String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+function filterBarHTML(key, selects = []) {
+  const st = filterState[key] || { q: "", sel: {} };
+  return `
+    <div class="table-filter" data-filter-key="${key}">
+      <input type="search" class="tf-search" placeholder="🔍 بحث..." value="${escapeAttr(st.q)}">
+      ${selects.filter((f) => f.options.length > 1).map((f) => `
+        <select class="tf-select" data-field="${f.field}">
+          <option value="">${f.label}: الكل</option>
+          ${f.options.map((o) => `<option value="${escapeAttr(o.value)}" ${st.sel[f.field] === String(o.value) ? "selected" : ""}>${o.label}</option>`).join("")}
+        </select>`).join("")}
+      <button type="button" class="link-btn tf-clear">مسح الفلاتر</button>
+      <span class="tf-count"></span>
+    </div>`;
+}
+/* Options for a status-style dropdown, limited to values that actually occur. */
+function statusOptions(values, order) {
+  const present = new Set(values);
+  const labels = { vacant: "شاغرة", late: "متأخر", on_track: "قيد السداد", not_started: "لم يبدأ السداد", paid_full: "مكتمل السداد",
+    committed: "ملتزم", semi_committed: "شبه ملتزم", delinquent: "مماطل", paid: "مدفوع", overdue: "متأخر", upcoming: "قادم", occupied: "مؤجرة" };
+  return order.filter((v) => present.has(v)).map((v) => ({ value: v, label: labels[v] || v }));
+}
+function uniqueOptions(values) {
+  return [...new Set(values.filter((v) => v != null && v !== ""))].map((v) => ({ value: v, label: v }));
+}
+function wireTableFilters(root) {
+  root.querySelectorAll(".table-filter:not([data-wired])").forEach((bar) => {
+    bar.dataset.wired = "1";
+    const key = bar.dataset.filterKey;
+    const table = root.querySelector(`table[data-filter-table="${key}"]`);
+    if (!table || !table.tBodies[0]) return;
+    const rows = [...table.tBodies[0].rows];
+    const search = bar.querySelector(".tf-search");
+    const selects = [...bar.querySelectorAll(".tf-select")];
+    const count = bar.querySelector(".tf-count");
+    const apply = () => {
+      const q = normalizeArabic(search.value.trim());
+      const sel = {};
+      selects.forEach((sl) => { if (sl.value) sel[sl.dataset.field] = sl.value; });
+      filterState[key] = { q: search.value.trim(), sel };
+      let shown = 0;
+      rows.forEach((r) => {
+        const okText = !q || normalizeArabic(r.textContent).includes(q);
+        const okSel = Object.entries(sel).every(([f, v]) => (r.getAttribute(`data-f-${f}`) || "") === v);
+        const show = okText && okSel;
+        r.style.display = show ? "" : "none";
+        if (show) shown++;
+      });
+      const active = q || Object.keys(sel).length;
+      count.textContent = active ? `عرض ${shown} من ${rows.length}` : `${rows.length} سجل`;
+      bar.classList.toggle("is-active", !!active);
+    };
+    search.addEventListener("input", apply);
+    selects.forEach((sl) => sl.addEventListener("change", apply));
+    bar.querySelector(".tf-clear").addEventListener("click", () => {
+      search.value = "";
+      selects.forEach((sl) => { sl.value = ""; });
+      apply();
+    });
+    apply();
+  });
+}
+// Every page renders into #appContent — wire any new filter bars as they appear.
+new MutationObserver(() => wireTableFilters(els.content)).observe(els.content, { childList: true, subtree: true });
 
 /* ---------- modal helpers ---------- */
 function openModal(html) {
@@ -196,14 +284,14 @@ async function renderUnits() {
   const rows = units.map((u) => {
     const c = u.activeContract;
     return `
-      <tr>
+      <tr data-f-property="${u.propertyId}" data-f-status="${c ? c.status : "vacant"}" data-f-commit="${c ? c.paymentCommitmentClassification : ""}" data-f-arrears="${c && c.oldArrears > 0 ? "has" : "none"}">
         <td><button class="link-btn cell-link" data-view-property="${u.propertyId}">${u.propertyName}</button></td>
         <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
         <td>${c ? c.tenantName : "—"}</td>
-        <td>${c ? toHijri(c.start) : "—"}</td>
+        <td>${c ? currentPeriodHTML(c) : "—"}</td>
         <td>${c ? money(c.rent) : "—"}</td>
         <td>${c ? c.installments : "—"}</td>
-        <td>${c ? money(c.paidAmount) : "—"}</td>
+        <td>${c ? money(c.currentYearPaid) : "—"}</td>
         <td>${c && c.oldArrears > 0 ? `<span style="color:#dc2626;font-weight:700;">${money(c.oldArrears)}</span>` : (c ? "—" : "—")}</td>
         <td>${c ? money(c.remaining) : "—"}</td>
         <td>${statusBadge(c ? c.status : "vacant")}</td>
@@ -228,12 +316,18 @@ async function renderUnits() {
       </div>
       ${units.length ? `
         <div style="overflow-x:auto;">
-          <table class="data-table">
+          ${filterBarHTML("units", [
+          { field: "property", label: "العقار", options: properties.map((p) => ({ value: String(p.id), label: p.name })) },
+          { field: "status", label: "حالة الدفع", options: statusOptions(units.map((u) => u.activeContract ? u.activeContract.status : "vacant"), ["late", "on_track", "not_started", "paid_full", "vacant"]) },
+          { field: "commit", label: "الالتزام", options: statusOptions(units.map((u) => u.activeContract && u.activeContract.paymentCommitmentClassification), ["committed", "semi_committed", "delinquent"]) },
+          { field: "arrears", label: "المتأخرات", options: [{ value: "has", label: "عليه متأخرات سابقة" }, { value: "none", label: "بدون متأخرات" }] },
+        ])}
+        <table class="data-table" data-filter-table="units">
             <thead>
               <tr>
                 <th>العقار</th><th>الوحدة</th><th>المستأجر</th>
-                <th>تاريخ بدء الإيجار (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
-                <th>المبلغ المدفوع</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th>الالتزام بالسداد</th><th></th>
+                <th>بداية الفترة الحالية (هجري)</th><th>قيمة الإيجار</th><th>عدد الأقساط</th>
+                <th>المدفوع (السنة الحالية)</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th>الالتزام بالسداد</th><th></th>
               </tr>
             </thead>
             <tbody>${rows}</tbody>
@@ -407,14 +501,123 @@ function openRecordPaymentModal(contractId, onSaved) {
   });
 }
 
-function openEndLeaseModal(unitId, tenantName, onSaved) {
-  openConfirmModal(
-    `سيتم إنهاء عقد "${tenantName}" الحالي وتحويل الوحدة إلى شاغرة. ستبقى بيانات المستأجر وسجل مدفوعاته محفوظة ضمن سجل العقود السابقة لهذه الوحدة، ويمكنك بعدها تأجيرها لمستأجر جديد.`,
-    async () => {
-      await Api.endLease(unitId);
-      (onSaved || renderUnits)();
-    }
-  );
+/* ISO date one day before the given ISO date. */
+function dayBefore(iso) {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() - 1);
+  return isoDate(d);
+}
+
+function openEndLeaseModal(unitId, contract, onSaved) {
+  // When the tenant left at the end of the previous lease year (common when
+  // the end is only recorded later), the year auto-renewed after that is
+  // never owed — this shortcut picks exactly that date.
+  const prevPeriodEnd = contract.currentYearNumber > 1 ? dayBefore(contract.currentPeriodStart) : null;
+  openModal(`
+    <h3>إنهاء العقد</h3>
+    <p style="color:var(--text-dim);font-size:.88rem;line-height:1.7;margin-top:-6px;">
+      المستأجر: <strong style="color:var(--text);">${contract.tenantName}</strong><br>
+      اختر <strong>آخر يوم فعلي</strong> للمستأجر في الوحدة. يُحسب عليه فقط ما استحق حتى هذا التاريخ،
+      ولا تُحسب الأقساط التي يحل موعدها بعده — حتى لو سجّلت الإنهاء في النظام متأخرًا.
+      يبقى العقد وسجل مدفوعاته ضمن "سجل العقود السابقة"، ويظهر أي مبلغ متبقٍّ عليه هناك وفي لوحة المعلومات.
+    </p>
+    ${prevPeriodEnd ? `
+      <div class="test-clock-presets">
+        <button type="button" class="btn btn-outline" id="endAtPrevPeriod">انتهى بنهاية الفترة السابقة (${toHijri(prevPeriodEnd)})</button>
+      </div>` : ""}
+    <form class="modal-form" id="endLeaseForm">
+      <label>تاريخ انتهاء العقد الفعلي (هجري)
+        ${hijriPickerHTML("end", todayHijri(), 3, 0)}
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-danger">إنهاء العقد</button>
+      </div>
+    </form>
+  `);
+  const finish = (endDate) => safely(async () => {
+    await Api.endLease(unitId, endDate);
+    closeModal();
+    (onSaved || renderUnits)();
+  });
+  const prevBtn = document.getElementById("endAtPrevPeriod");
+  if (prevBtn) prevBtn.addEventListener("click", () => finish(prevPeriodEnd));
+  document.getElementById("endLeaseForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    finish(readHijriPicker(e.target, "end"));
+  });
+}
+
+/* ---------- تغيير الإيجار (price change from a lease year onward) ---------- */
+/* Hijri label for the first day of lease year N (same day/month as the start, N-1 years later). */
+function leaseYearStartLabel(contract, year) {
+  const p = getHijriParts(new Date(contract.start + "T00:00:00"));
+  return `${p.d} ${HIJRI_MONTHS[p.m - 1]} ${p.y + year - 1} هـ`;
+}
+
+function openRentChangeModal(contract, onSaved) {
+  const cur = contract.currentYearNumber;
+  const years = [];
+  for (let y = Math.max(2, cur); y <= cur + 1; y++) years.push(y);
+  openModal(`
+    <h3>تغيير قيمة الإيجار</h3>
+    <p style="color:var(--text-dim);font-size:.88rem;line-height:1.7;margin-top:-6px;">
+      يبقى نفس العقد ونفس المستأجر وسجل الدفعات. السنوات السابقة تبقى بسعرها القديم،
+      ويُطبق السعر الجديد من السنة التي تختارها وما بعدها (ويستمر مع التجديد التلقائي).
+    </p>
+    <form class="modal-form" id="rentChangeForm">
+      <label>يبدأ السعر الجديد من
+        <select name="effectiveYear" required>
+          ${years.map((y) => `<option value="${y}" ${y === cur + 1 ? "selected" : ""}>السنة ${y} — من ${leaseYearStartLabel(contract, y)}${y === cur ? " (الفترة الحالية)" : " (الفترة القادمة)"}</option>`).join("")}
+        </select>
+      </label>
+      <label>قيمة الإيجار السنوي الجديدة <input type="number" name="rent" min="1" value="${contract.rent}" required></label>
+      <label>عدد الأقساط <input type="number" name="installments" min="1" max="12" value="${contract.installments}" required></label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  `);
+  document.getElementById("rentChangeForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    safely(async () => {
+      await Api.setRentChange(contract.id, Number(f.effectiveYear.value), Number(f.rent.value), Number(f.installments.value));
+      closeModal();
+      onSaved();
+    });
+  });
+}
+
+/* Rent history: year 1 price plus every change, each with the lease years it covers. */
+function rentHistoryHTML(c) {
+  if (!c.rentChanges || !c.rentChanges.length) return "";
+  const rows = [{ id: null, effectiveYear: 1, rent: c.baseRent, installments: c.baseInstallments }, ...c.rentChanges];
+  return `
+    <div class="panel">
+      <div class="panel-head"><h2>سجل قيمة الإيجار</h2></div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>السنوات</th><th>من (هجري)</th><th>قيمة الإيجار السنوي</th><th>عدد الأقساط</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map((r, i) => {
+              const next = rows[i + 1];
+              const span = next ? (next.effectiveYear - 1 === r.effectiveYear ? `السنة ${r.effectiveYear}` : `السنة ${r.effectiveYear} – ${next.effectiveYear - 1}`) : `السنة ${r.effectiveYear} وما بعدها`;
+              return `
+                <tr>
+                  <td>${span}${r.effectiveYear <= c.currentYearNumber && (!next || next.effectiveYear > c.currentYearNumber) ? ` <span class="badge badge-green">الحالي</span>` : ""}</td>
+                  <td>${leaseYearStartLabel(c, r.effectiveYear)}</td>
+                  <td>${money(r.rent)}</td>
+                  <td>${r.installments}</td>
+                  <td>${r.id ? `<button class="link-btn" data-delete-rent-change="${r.id}" style="color:#dc2626;">حذف</button>` : ""}</td>
+                </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
 }
 
 function openRenewContractModal(unitId, oldContract, onSaved) {
@@ -423,6 +626,10 @@ function openRenewContractModal(unitId, oldContract, onSaved) {
     <p style="margin-top:-8px;font-size:.85rem;color:var(--text-dim);">المستأجر: ${oldContract.tenantName}</p>
     <p style="margin:-6px 0 0;font-size:.85rem;">
       تصنيف السعر الحالي: ${statusBadge(oldContract.priceClassification)} &nbsp; الالتزام بالسداد: ${statusBadge(oldContract.paymentCommitmentClassification)}
+    </p>
+    <p style="margin:4px 0 0;font-size:.8rem;color:var(--text-dim);line-height:1.6;">
+      لتحديث السعر فقط استخدم "تغيير الإيجار" بدلًا من التجديد. عند التجديد يُغلق العقد الحالي في اليوم السابق لبداية العقد الجديد،
+      وأي مبلغ متبقٍّ على المستأجر منه${oldContract.outstanding > 0 ? ` (حاليًا ${money(oldContract.outstanding)})` : ""} يُنقل إلى متأخرات العقد الجديد.
     </p>
     <form class="modal-form" id="renewForm">
       <label>تاريخ بدء العقد الجديد (هجري)
@@ -499,13 +706,16 @@ async function renderPropertyDetails(propertyId) {
       </div>
       ${property.units.length ? `
         <div style="overflow-x:auto;">
-          <table class="data-table">
+          ${filterBarHTML("property-units", [
+          { field: "status", label: "حالة الدفع", options: statusOptions(property.units.map((u) => u.activeContract ? u.activeContract.status : "vacant"), ["late", "on_track", "not_started", "paid_full", "vacant"]) },
+        ])}
+        <table class="data-table" data-filter-table="property-units">
             <thead><tr><th>الوحدة</th><th>الشارع</th><th>المستأجر</th><th>قيمة الإيجار</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>حالة الدفع</th><th></th></tr></thead>
             <tbody>
               ${property.units.map((u) => {
                 const c = u.activeContract;
                 return `
-                  <tr>
+                  <tr data-f-status="${c ? c.status : "vacant"}">
                     <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
                     <td>${u.street || "—"}</td>
                     <td>${c ? c.tenantName : "—"}</td>
@@ -531,11 +741,14 @@ async function renderPropertyDetails(propertyId) {
       <div class="panel-head"><h2>قائمة المدفوعات (${property.payments.length})</h2></div>
       ${property.payments.length ? `
         <div style="overflow-x:auto;">
-          <table class="data-table">
+          ${filterBarHTML("property-payments", [
+          { field: "method", label: "طريقة الدفع", options: uniqueOptions(property.payments.map((p) => p.method)) },
+        ])}
+        <table class="data-table" data-filter-table="property-payments">
             <thead><tr><th>التاريخ (هجري)</th><th>الوحدة</th><th>المستأجر</th><th>المبلغ</th><th>طريقة الدفع</th></tr></thead>
             <tbody>
               ${property.payments.map((p) => `
-                <tr>
+                <tr data-f-method="${escapeAttr(p.method)}">
                   <td>${toHijri(p.date)}</td>
                   <td>${p.unitNumber}</td>
                   <td>${p.tenantName}</td>
@@ -582,7 +795,7 @@ async function renderUnitDetails(unitId) {
     ${c ? `
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">قيمة الإيجار</div><div class="stat-value">${money(c.rent)}</div></div>
-        <div class="stat-card accent"><div class="stat-label">المدفوع</div><div class="stat-value">${money(c.paidAmount)}</div></div>
+        <div class="stat-card accent"><div class="stat-label">المدفوع (السنة الحالية)</div><div class="stat-value">${money(c.currentYearPaid)}</div><div style="font-size:.75rem;color:var(--text-dim);margin-top:4px;">إجمالي المدفوع منذ بداية العقد: ${money(c.paidAmount)}</div></div>
         <div class="stat-card warn"><div class="stat-label">متأخرات سابقة</div><div class="stat-value">${money(c.oldArrears)}</div></div>
         <div class="stat-card warn"><div class="stat-label">المتبقي (السنة الحالية)</div><div class="stat-value">${money(c.remaining)}</div></div>
         <div class="stat-card"><div class="stat-label">حالة الدفع</div><div class="stat-value">${statusBadge(c.status)}</div></div>
@@ -595,6 +808,7 @@ async function renderUnitDetails(unitId) {
         <h2>${unit.propertyName} — وحدة ${unit.number}</h2>
         <div class="table-actions">
           ${c ? `
+            <button class="btn btn-outline" id="rentChangeBtn">تغيير الإيجار</button>
             <button class="btn btn-outline" id="renewBtn">تجديد العقد</button>
             <button class="btn btn-outline" id="endLeaseBtn" style="color:#dc2626;border-color:#dc2626;">إنهاء العقد</button>
             <button class="btn btn-primary" id="recordPaymentBtn">تسجيل دفعة</button>
@@ -604,7 +818,7 @@ async function renderUnitDetails(unitId) {
       <div style="padding:18px 22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;color:var(--text-dim);font-size:.88rem;">
         <div>الشارع<br><strong style="color:var(--text);">${unit.street || "—"}</strong></div>
         <div>المستأجر<br><strong style="color:var(--text);">${c ? c.tenantName : "—"}</strong></div>
-        <div>تاريخ بدء الإيجار (هجري)<br><strong style="color:var(--text);">${c ? toHijri(c.start) : "—"}</strong></div>
+        <div>الفترة الحالية (هجري)<br><strong style="color:var(--text);">${c ? `${toHijri(c.currentPeriodStart)} ← ${toHijri(c.currentPeriodEnd)}` : "—"}</strong>${c ? `<br><span style="font-size:.78rem;">السنة ${c.currentYearNumber} من العقد · بداية العقد الأصلية: ${toHijri(c.start)}</span>` : ""}</div>
         <div>عدد الأقساط<br><strong style="color:var(--text);">${c ? c.installments : "—"}</strong></div>
         ${c ? `
           <div>حساب التجديد السنوي<br>
@@ -620,17 +834,23 @@ async function renderUnitDetails(unitId) {
       </div>
     </div>
 
+    ${c ? rentHistoryHTML(c) : ""}
+
     ${c ? `
       <div class="panel">
         <div class="panel-head"><h2>جدول استحقاق الأقساط</h2></div>
         <div style="overflow-x:auto;">
-          <table class="data-table">
+          ${filterBarHTML("schedule", [
+          { field: "year", label: "السنة", options: [...new Set(schedule.map((i) => i.year))].map((y) => ({ value: String(y), label: `سنة ${y}` })) },
+          { field: "status", label: "الحالة", options: statusOptions(schedule.map((i) => i.status), ["overdue", "upcoming", "paid"]) },
+        ])}
+        <table class="data-table" data-filter-table="schedule">
             <thead><tr><th>السنة</th><th>القسط</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th><th>الحالة</th></tr></thead>
             <tbody>
               ${schedule.map((inst) => `
-                <tr>
+                <tr data-f-year="${inst.year}" data-f-status="${inst.status}">
                   <td>سنة ${inst.year}</td>
-                  <td>${inst.index} من ${c.installments}</td>
+                  <td>${inst.index} من ${schedule.filter((s) => s.year === inst.year).length}</td>
                   <td>${toHijri(inst.dueDate)}</td>
                   <td>${money(inst.amount)}</td>
                   <td>${statusBadge(inst.status)}</td>
@@ -646,11 +866,14 @@ async function renderUnitDetails(unitId) {
       <div class="panel-head"><h2>سجل المدفوعات لهذه الوحدة (${payments.length})</h2></div>
       ${payments.length ? `
         <div style="overflow-x:auto;">
-          <table class="data-table">
+          ${filterBarHTML("unit-payments", [
+          { field: "method", label: "طريقة الدفع", options: uniqueOptions(payments.map((p) => p.method)) },
+        ])}
+        <table class="data-table" data-filter-table="unit-payments">
             <thead><tr><th>التاريخ (هجري)</th><th>المبلغ</th><th>طريقة الدفع</th></tr></thead>
             <tbody>
               ${payments.map((p) => `
-                <tr>
+                <tr data-f-method="${escapeAttr(p.method)}">
                   <td>${toHijri(p.date)}</td>
                   <td>${money(p.amount)}</td>
                   <td>${p.method}</td>
@@ -667,7 +890,7 @@ async function renderUnitDetails(unitId) {
       ${pastContracts.length ? `
         <div style="overflow-x:auto;">
           <table class="data-table">
-            <thead><tr><th>المستأجر</th><th>من (هجري)</th><th>إلى (هجري)</th><th>قيمة الإيجار</th><th>إجمالي المدفوع</th></tr></thead>
+            <thead><tr><th>المستأجر</th><th>من (هجري)</th><th>إلى (هجري)</th><th>قيمة الإيجار</th><th>إجمالي المدفوع</th><th>المتبقي على المستأجر</th><th></th></tr></thead>
             <tbody>
               ${pastContracts.map((pc) => `
                 <tr>
@@ -676,6 +899,10 @@ async function renderUnitDetails(unitId) {
                   <td>${pc.endedAt ? toHijri(pc.endedAt) : "—"}</td>
                   <td>${money(pc.rent)}</td>
                   <td>${money(pc.paidAmount)}</td>
+                  <td>${pc.outstanding > 0
+                    ? `<span style="color:#dc2626;font-weight:700;">${money(pc.outstanding)}</span>`
+                    : (pc.balanceCarriedForward > 0 ? `<span style="color:var(--text-dim);font-size:.8rem;">نُقل ${money(pc.balanceCarriedForward)} للعقد الجديد</span>` : "لا مستحقات")}</td>
+                  <td>${pc.outstanding > 0 ? `<button class="link-btn" data-pay-ended="${pc.id}">تسجيل دفعة</button>` : ""}</td>
                 </tr>
               `).join("")}
             </tbody>
@@ -692,7 +919,18 @@ async function renderUnitDetails(unitId) {
   const renewBtn = document.getElementById("renewBtn");
   if (renewBtn) renewBtn.addEventListener("click", () => openRenewContractModal(unitId, c, () => renderUnitDetails(unitId)));
   const endLeaseBtn = document.getElementById("endLeaseBtn");
-  if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, c.tenantName, () => renderUnitDetails(unitId)));
+  if (endLeaseBtn) endLeaseBtn.addEventListener("click", () => openEndLeaseModal(unitId, c, () => renderUnitDetails(unitId)));
+  const rentChangeBtn = document.getElementById("rentChangeBtn");
+  if (rentChangeBtn) rentChangeBtn.addEventListener("click", () => openRentChangeModal(c, () => renderUnitDetails(unitId)));
+  els.content.querySelectorAll("[data-delete-rent-change]").forEach((b) => {
+    b.addEventListener("click", () => openConfirmModal("سيتم حذف تغيير الإيجار هذا، وتعود السنوات التي يغطيها للسعر السابق.", async () => {
+      await Api.deleteRentChange(c.id, b.dataset.deleteRentChange);
+      renderUnitDetails(unitId);
+    }));
+  });
+  els.content.querySelectorAll("[data-pay-ended]").forEach((b) => {
+    b.addEventListener("click", () => openRecordPaymentModal(b.dataset.payEnded, () => renderUnitDetails(unitId)));
+  });
   const toggleCalendarBtn = document.getElementById("toggleCalendarBtn");
   if (toggleCalendarBtn) toggleCalendarBtn.addEventListener("click", () => {
     const next = c.calendarBasis === "GREGORIAN" ? "HIJRI" : "GREGORIAN";
@@ -710,6 +948,7 @@ const DASH_BOX_TITLES = {
   stats2: "العقود والتحصيل",
   delayed: "الوحدات المتأخرة",
   upcoming: "مستحقات الشهر القادم",
+  ended: "مستحقات على عقود منتهية",
 };
 
 function getDashOrder(defaultIds) {
@@ -732,7 +971,7 @@ async function renderOverview() {
       <div class="stat-grid">
         <div class="stat-card"><div class="stat-label">إجمالي الوحدات</div><div class="stat-value">${o.totalUnits}</div></div>
         <div class="stat-card"><div class="stat-label">نسبة الإشغال</div><div class="stat-value">${o.occupancyRate}%</div></div>
-        <div class="stat-card accent"><div class="stat-label">المحصّل من العقود السارية</div><div class="stat-value">${money(o.totalPaid)}</div></div>
+        <div class="stat-card accent"><div class="stat-label">المحصّل من العقود السارية (السنة الحالية)</div><div class="stat-value">${money(o.totalPaid)}</div></div>
         <div class="stat-card warn"><div class="stat-label">المتبقي من العقود السارية (متأخرات + السنة الحالية)</div><div class="stat-value">${money(o.totalRemaining)}</div></div>
       </div>
     `,
@@ -747,7 +986,8 @@ async function renderOverview() {
         <div class="panel-head"><h2>الوحدات المتأخرة في السداد (${o.unpaidUnits.length})</h2></div>
         ${o.unpaidUnits.length ? `
           <div style="overflow-x:auto;">
-            <table class="data-table">
+            ${filterBarHTML("dash-delayed")}
+        <table class="data-table" data-filter-table="dash-delayed">
               <thead><tr><th>المستأجر</th><th>الوحدة</th><th>متأخرات سابقة</th><th>المتبقي (السنة الحالية)</th><th>الإجمالي</th><th>حالة الدفع</th></tr></thead>
               <tbody>
                 ${o.unpaidUnits.map((r) => `
@@ -771,7 +1011,8 @@ async function renderOverview() {
         <div class="panel-head"><h2>مبالغ مستحقة الشهر القادم (${o.upcomingNextMonth.length})</h2></div>
         ${o.upcomingNextMonth.length ? `
           <div style="overflow-x:auto;">
-            <table class="data-table">
+            ${filterBarHTML("dash-upcoming")}
+        <table class="data-table" data-filter-table="dash-upcoming">
               <thead><tr><th>المستأجر</th><th>الوحدة</th><th>تاريخ الاستحقاق (هجري)</th><th>المبلغ</th></tr></thead>
               <tbody>
                 ${o.upcomingNextMonth.map((p) => `
@@ -786,6 +1027,30 @@ async function renderOverview() {
             </table>
           </div>
         ` : `<div class="empty-state">لا توجد دفعات مستحقة خلال الشهر القادم.</div>`}
+      </div>
+    `,
+    ended: `
+      <div class="panel">
+        <div class="panel-head"><h2>مستحقات على عقود منتهية: ${money(o.endedContractsOutstanding || 0)} (${(o.endedContractsWithBalance || []).length})</h2></div>
+        ${(o.endedContractsWithBalance || []).length ? `
+          <div style="overflow-x:auto;">
+            ${filterBarHTML("dash-ended")}
+        <table class="data-table" data-filter-table="dash-ended">
+              <thead><tr><th>المستأجر</th><th>الوحدة</th><th>تاريخ الانتهاء (هجري)</th><th>المتبقي عليه</th><th></th></tr></thead>
+              <tbody>
+                ${o.endedContractsWithBalance.map((r) => `
+                  <tr>
+                    <td>${r.tenantName}</td>
+                    <td>${r.unitLabel}</td>
+                    <td>${toHijri(r.endedAt)}</td>
+                    <td><strong style="color:#dc2626;">${money(r.outstanding)}</strong></td>
+                    <td><a class="link-btn" href="#unit/${r.unitId}">عرض</a></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        ` : `<div class="empty-state">لا توجد مبالغ متبقية على عقود منتهية.</div>`}
       </div>
     `,
   };
@@ -927,7 +1192,8 @@ async function renderAdmin() {
     <div class="panel">
       <div class="panel-head"><h2>العقارات (${properties.length})</h2></div>
       ${properties.length ? `
-        <table class="data-table">
+        ${filterBarHTML("admin-properties")}
+        <table class="data-table" data-filter-table="admin-properties">
           <thead><tr><th>اسم العقار</th><th>المدينة</th><th>عدد الوحدات</th><th></th></tr></thead>
           <tbody>
             ${properties.map((p) => `
@@ -950,11 +1216,15 @@ async function renderAdmin() {
     <div class="panel">
       <div class="panel-head"><h2>الوحدات (${units.length})</h2></div>
       ${units.length ? `
-        <table class="data-table">
+        ${filterBarHTML("admin-units", [
+          { field: "property", label: "العقار", options: uniqueOptions(units.map((u) => u.propertyName)) },
+          { field: "status", label: "الحالة", options: statusOptions(units.map((u) => u.status), ["occupied", "vacant"]) },
+        ])}
+        <table class="data-table" data-filter-table="admin-units">
           <thead><tr><th>العقار</th><th>الوحدة</th><th>الشارع</th><th>الحالة</th><th></th></tr></thead>
           <tbody>
             ${units.map((u) => `
-              <tr>
+              <tr data-f-property="${escapeAttr(u.propertyName)}" data-f-status="${u.status}">
                 <td>${u.propertyName}</td>
                 <td><button class="link-btn cell-link" data-view-unit="${u.id}">${u.number}</button></td>
                 <td>${u.street || "—"}</td>
@@ -1059,8 +1329,9 @@ async function openEditUnitModal(unitId) {
         <label>تاريخ بدء الإيجار (هجري)
           ${hijriPickerHTML("start", startParts)}
         </label>
-        <label>قيمة الإيجار السنوي <input type="number" name="rent" min="1" value="${c.rent}" required></label>
-        <label>عدد الأقساط <input type="number" name="installments" min="1" value="${c.installments}" required></label>
+        <label>قيمة الإيجار السنوي${c.rentChanges && c.rentChanges.length ? " (السنة الأولى)" : ""} <input type="number" name="rent" min="1" value="${c.baseRent}" required></label>
+        <label>عدد الأقساط${c.rentChanges && c.rentChanges.length ? " (السنة الأولى)" : ""} <input type="number" name="installments" min="1" value="${c.baseInstallments}" required></label>
+        ${c.rentChanges && c.rentChanges.length ? `<p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">تغييرات الإيجار للسنوات التالية تُدار من "تغيير الإيجار" في صفحة الوحدة.</p>` : ""}
         <p style="margin:-4px 0 0;font-size:.78rem;color:var(--text-dim);">المبلغ المدفوع (${money(c.paidAmount)}) يُدار من سجل الدفعات — استخدم "تسجيل دفعة" في صفحة الوحدات أو تفاصيل العقار لإضافة دفعة جديدة.</p>
         <label>نوع العقد
           <select name="contractFormat">
@@ -1109,4 +1380,100 @@ async function openEditUnitModal(unitId) {
   });
 }
 
-router();
+/* ---------- test clock (local dev only) ----------
+   Lets you pretend "today" is a later date so you can see how installments,
+   arrears and statuses change over time. The backend does the date math, so
+   the override lives there (in memory — it resets when the server restarts),
+   and the button only appears when the backend has the test clock enabled
+   (local dev; it's switched off on the live Render deployment). */
+let appTodayISO = null; // simulated "today" (yyyy-mm-dd), null = the real date
+
+function appToday() {
+  return appTodayISO ? new Date(appTodayISO + "T00:00:00") : new Date();
+}
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function applyTestClockState(state) {
+  appTodayISO = state.overridden ? state.today : null;
+  const btn = document.getElementById("testClockBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", state.overridden);
+  btn.innerHTML = state.overridden
+    ? `🧪 اليوم التجريبي: ${toHijri(state.today)}`
+    : "🧪 تغيير تاريخ اليوم";
+  btn.title = state.overridden
+    ? "التطبيق يعمل الآن بتاريخ تجريبي — اضغط للتغيير أو للعودة لتاريخ اليوم الحقيقي"
+    : "اختبار التطبيق بتاريخ مستقبلي";
+}
+
+async function changeTestClock(action) {
+  await safely(async () => {
+    const state = await action();
+    applyTestClockState(state);
+    closeModal();
+    await router();
+  });
+}
+
+function openTestClockModal() {
+  const presets = [
+    [1, "+ شهر"],
+    [3, "+ 3 أشهر"],
+    [6, "+ 6 أشهر"],
+    [12, "+ سنة"],
+  ];
+  openModal(`
+    <h3>🧪 تغيير تاريخ اليوم (للاختبار)</h3>
+    <p style="color:var(--text-dim);font-size:.88rem;line-height:1.7;margin-bottom:12px;">
+      يحسب التطبيق الأقساط والمتأخرات وحالة السداد ولوحة المعلومات كأن اليوم هو التاريخ الذي تختاره.
+      لا تتغير أي بيانات محفوظة، ويعود التاريخ الحقيقي عند الضغط على "العودة لتاريخ اليوم" أو عند إعادة تشغيل الخادم.
+    </p>
+    <div class="test-clock-presets">
+      ${presets.map(([m, label]) => `<button type="button" class="btn btn-outline" data-months="${m}">${label}</button>`).join("")}
+    </div>
+    <form class="modal-form" id="testClockForm">
+      <label>أو اختر تاريخًا (هجري)
+        ${hijriPickerHTML("clock", todayHijri(), 1, 6)}
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelModal">إلغاء</button>
+        ${appTodayISO ? `<button type="button" class="btn btn-outline" id="resetTestClock">العودة لتاريخ اليوم</button>` : ""}
+        <button type="submit" class="btn btn-primary">تطبيق</button>
+      </div>
+    </form>
+  `);
+  els.modalBody.querySelectorAll("[data-months]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const d = appToday();
+      d.setMonth(d.getMonth() + Number(b.dataset.months));
+      changeTestClock(() => Api.setTestClock(isoDate(d)));
+    });
+  });
+  const resetBtn = document.getElementById("resetTestClock");
+  if (resetBtn) resetBtn.addEventListener("click", () => changeTestClock(() => Api.resetTestClock()));
+  document.getElementById("testClockForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    changeTestClock(() => Api.setTestClock(readHijriPicker(e.target, "clock")));
+  });
+}
+
+async function initTestClock() {
+  let state;
+  try {
+    state = await Api.getTestClock();
+  } catch (e) {
+    return; // backend without the test clock (e.g. the live site) — no button
+  }
+  if (!state || !state.enabled) return;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.id = "testClockBtn";
+  btn.className = "btn btn-outline test-clock-btn";
+  btn.addEventListener("click", openTestClockModal);
+  els.user.parentNode.insertBefore(btn, els.user);
+  applyTestClockState(state);
+}
+
+initTestClock().finally(router);

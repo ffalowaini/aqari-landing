@@ -107,7 +107,7 @@ const Api = {
   getUnitDetail(id) { return request("GET", `/api/units/${id}`); },
   rentOut(unitId, payload) { return request("POST", `/api/units/${unitId}/rent-out`, payload); },
   renew(unitId, payload) { return request("POST", `/api/units/${unitId}/renew`, payload); },
-  endLease(unitId) { return request("POST", `/api/units/${unitId}/end-lease`, {}); },
+  endLease(unitId, endDate) { return request("POST", `/api/units/${unitId}/end-lease`, { endDate }); },
 
   recordPayment(contractId, amount, method, date) {
     return request("POST", `/api/contracts/${contractId}/payments`, { amount, method, date });
@@ -118,11 +118,22 @@ const Api = {
   updateTenant(tenantId, name, phone) {
     return request("PUT", `/api/tenants/${tenantId}`, { name, phone });
   },
+  setRentChange(contractId, effectiveYear, rent, installments) {
+    return request("POST", `/api/contracts/${contractId}/rent-changes`, { effectiveYear, rent, installments });
+  },
+  deleteRentChange(contractId, changeId) {
+    return request("DELETE", `/api/contracts/${contractId}/rent-changes/${changeId}`);
+  },
   updateCalendarBasis(contractId, calendarBasis) {
     return request("PUT", `/api/contracts/${contractId}/calendar-basis`, { calendarBasis });
   },
 
   getOverview() { return request("GET", "/api/dashboard/overview"); },
+
+  // Local-dev test clock: moves the backend's "today" so schedules/statuses can be previewed in the future.
+  getTestClock() { return request("GET", "/api/test-clock"); },
+  setTestClock(date) { return request("PUT", "/api/test-clock", { date }); },
+  resetTestClock() { return request("DELETE", "/api/test-clock"); },
 
   exportData() { return request("GET", "/api/data/export"); },
   importData(bundle) { return request("POST", "/api/data/import", bundle); },

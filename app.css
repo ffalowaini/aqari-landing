@@ -159,3 +159,20 @@
   .stat-grid{grid-template-columns:1fr;}
   .app-content{padding:18px;}
 }
+
+/* Test-clock button (local dev only) */
+.test-clock-btn{padding:8px 14px;font-size:.82rem;white-space:nowrap;}
+.test-clock-btn.active{background:rgba(194,84,15,.12);border-color:var(--warn);color:var(--warn);}
+.test-clock-presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+.test-clock-presets .btn{padding:8px 14px;font-size:.85rem;}
+@media (max-width:700px){.test-clock-btn{font-size:.72rem;padding:6px 10px;white-space:normal;}}
+
+/* Table filters */
+.table-filter{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:12px 22px;border-bottom:1px solid var(--border);}
+.table-filter .tf-search{flex:1 1 200px;min-width:160px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:.85rem;}
+.table-filter .tf-select{padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:.82rem;}
+.table-filter .tf-clear{font-size:.8rem;display:none;}
+.table-filter.is-active .tf-clear{display:inline;}
+.table-filter.is-active .tf-select:has(option:checked:not([value=""])){border-color:var(--primary);}
+.table-filter .tf-count{margin-inline-start:auto;color:var(--text-dim);font-size:.78rem;white-space:nowrap;}
+@media (max-width:700px){.table-filter{padding:10px 14px;}.table-filter .tf-select{flex:1 1 45%;}}
