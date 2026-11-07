@@ -1,7 +1,7 @@
 function requireAuth() {
   const token = Api.getToken();
   if (!token) {
-    window.location.href = "login.html";
+    window.location.href = "login";
     return null;
   }
   return Api.getSessionUser();
@@ -9,7 +9,7 @@ function requireAuth() {
 
 function redirectIfLoggedIn() {
   if (Api.getToken()) {
-    window.location.href = "dashboard.html";
+    window.location.href = "dashboard";
   }
 }
 
@@ -29,7 +29,7 @@ function initSignupForm() {
     }
     try {
       await Api.signup(name, email, password);
-      window.location.href = "dashboard.html";
+      window.location.href = "dashboard";
     } catch (err) {
       showError(errorBox, err.message || "تعذّر إنشاء الحساب.");
     }
@@ -46,7 +46,7 @@ function initLoginForm() {
     const password = form.password.value;
     try {
       await Api.login(email, password);
-      window.location.href = "dashboard.html";
+      window.location.href = "dashboard";
     } catch (err) {
       showError(errorBox, err.message || "البريد الإلكتروني أو كلمة المرور غير صحيحة.");
     }
@@ -60,5 +60,5 @@ function showError(box, message) {
 
 function logout() {
   Api.clearSession();
-  window.location.href = "login.html";
+  window.location.href = "login";
 }

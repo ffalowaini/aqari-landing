@@ -59,7 +59,7 @@ async function request(method, path, body) {
 
   if (response.status === 401) {
     clearSession();
-    window.location.href = "login.html";
+    window.location.href = "login";
     throw new ApiError("انتهت الجلسة", 401);
   }
 
@@ -149,7 +149,7 @@ const Api = {
     }
     if (response.status === 401) {
       clearSession();
-      window.location.href = "login.html";
+      window.location.href = "login";
       throw new ApiError("انتهت الجلسة", 401);
     }
     if (!response.ok) {
