@@ -1,3 +1,5 @@
+/* Entry point for index.html (landing page): mobile menu toggle. */
+
 const navToggle = document.getElementById("navToggle");
 const navLinks = document.querySelector(".nav-links");
 const navAuth = document.querySelector(".nav-auth");

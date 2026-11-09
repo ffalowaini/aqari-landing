@@ -1,3 +1,5 @@
+/* Dashboard app: shell, sidebar, panels, tables, modals, filters, dashboard boxes. */
+
 .app-body{background:var(--bg);}
 
 .app-shell{display:flex;min-height:100vh;}

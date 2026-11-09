@@ -1,40 +1,11 @@
-/*
-  API client for the Aqari Zaki Spring Boot backend.
-  Replaces the old localStorage-based DataStore — all reads/writes now
-  go over HTTP to a real server backed by a SQL database.
+/* HTTP client for the Aqari backend (Spring Boot REST API).
+   Adds the JWT to every request, turns error responses into ApiError with the
+   server's message, and sends the user back to login when the session expires. */
 
-  Local dev (served from localhost/127.0.0.1, or from a LAN IP when the
-  frontend is opened from another device on the same network) talks to the
-  local backend from aqari-backend/README.md, on that same host; anywhere
-  else (e.g. the live GitHub Pages site) talks to the deployed Render
-  backend.
-*/
-const isLocalHost = /^(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})$/
-  .test(location.hostname);
-const API_BASE_URL = isLocalHost
-  ? `${location.protocol}//${location.hostname}:8081`
-  : "https://aqari-backend-tkmq.onrender.com";
+import { API_BASE_URL } from "../config.js";
+import { clearSession, getSessionUser, getToken, setSession } from "./session.js";
 
-const TOKEN_KEY = "aqari_token";
-const USER_KEY = "aqari_user";
-
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
-function setSession(token, user) {
-  localStorage.setItem(TOKEN_KEY, token);
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-}
-function clearSession() {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
-}
-function getSessionUser() {
-  const raw = localStorage.getItem(USER_KEY);
-  return raw ? JSON.parse(raw) : null;
-}
-
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message, status) {
     super(message);
     this.status = status;
@@ -77,7 +48,7 @@ async function request(method, path, body) {
   return text ? JSON.parse(text) : null;
 }
 
-const Api = {
+export const Api = {
   ApiError,
   getToken,
   getSessionUser,
